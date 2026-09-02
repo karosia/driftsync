@@ -1,0 +1,20 @@
+# testdata/allof-ref-3.0.yaml — Post.author uses the 3.0 allOf wrapper
+openapi: 3.0.3
+info:
+  title: Blog API
+  version: 1.0.0
+paths: {}
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        userId:
+          type: string
+    Post:
+      type: object
+      properties:
+        author:
+          allOf:
+            - $ref: '#/components/schemas/User'
+          description: The user who wrote this post
