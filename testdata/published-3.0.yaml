@@ -1,0 +1,33 @@
+# testdata/published-3.0.yaml — a hand-written 3.0 doc to prove 3.0 is accepted
+openapi: 3.0.3
+info:
+  title: User API
+  version: 1.0.0
+paths:
+  /users/{id}:
+    get:
+      operationId: get-user
+      summary: Fetch a single user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+          format: email

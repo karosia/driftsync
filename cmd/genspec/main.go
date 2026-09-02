@@ -32,7 +32,7 @@ func main() {
 
 	// 3) Emit the spec to disk. This file is the ONLY thing that crosses the
 	//    boundary — no diff engine or agent dependencies leak into the target.
-	if err := os.WriteFile(outputPath, doc.YAML, 0o644); err != nil {
+	if err := os.WriteFile(outputPath, doc.Raw, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "write failed:", err)
 		os.Exit(1)
 	}

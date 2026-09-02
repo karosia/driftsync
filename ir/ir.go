@@ -1,3 +1,4 @@
+// ir/ir.go
 package ir
 
 import (
@@ -7,17 +8,17 @@ import (
 )
 
 // Document is our canonical intermediate representation (IR).
-// Everything downstream — diff, canonicalizer, agents — consumes ONLY this.
-// Invariant: no matter which source an adapter reads, its output is OpenAPI 3.1.
+// Everything downstream — canonicalizer, diff, agents — consumes ONLY this.
+// Note: an adapter's output is OpenAPI 3.x; the canonicalizer normalizes both
+// sides to 3.1 in the core, just before diff (never inside an adapter).
 type Document struct {
-	Version string           // e.g. "3.1.0"; used to assert the 3.1 guarantee
-	YAML    []byte           // canonical serialized form (for file emit / replay / PR diffs)
+	Version string           // exact source version, e.g. "3.0.3" or "3.1.0" (not yet canonicalized)
+	Raw     []byte           // the source's serialized bytes as-is (YAML or JSON, as produced/published)
 	Model   *v3high.Document // parsed model for structural traversal (walking paths, schemas)
 }
 
 // Adapter turns "the contract a source exposes" into a Document.
 // One implementation per source: a code framework, or a published spec file.
-// The core depends on this interface, never on a concrete adapter.
 type Adapter interface {
 	Extract(ctx context.Context) (*Document, error)
 }

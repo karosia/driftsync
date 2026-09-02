@@ -61,7 +61,7 @@ func (a *Adapter) Extract(_ context.Context) (*ir.Document, error) {
 	// (5) Wrap into the IR. From here on, the core knows nothing about huma.
 	return &ir.Document{
 		Version: version,
-		YAML:    raw,
+		Raw:     raw,
 		Model:   &model.Model, // pointer to the v3high.Document value
 	}, nil
 }
