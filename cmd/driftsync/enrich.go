@@ -5,36 +5,29 @@ import (
 	"fmt"
 	"os"
 
-	"driftsync/adapters/specfile"
-	"driftsync/canonicalize"
 	"driftsync/diff"
 	"driftsync/enrich"
-	"driftsync/ir"
 	"driftsync/llm"
 	"driftsync/patch"
 )
 
-func main() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: enrich <published-spec> <code-spec>")
-		os.Exit(2)
+func cmdEnrich(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: driftsync enrich <published-spec> <code-spec>")
 	}
-	published, err := loadCanonical(os.Args[1])
+	published, err := loadCanonical(args[0])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "load published:", err)
-		os.Exit(1)
+		return fmt.Errorf("load published: %w", err)
 	}
-	code, err := loadCanonical(os.Args[2])
+	code, err := loadCanonical(args[1])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "load code:", err)
-		os.Exit(1)
+		return fmt.Errorf("load code: %w", err)
 	}
 
 	report := diff.Diff(published, code)
 	patches, err := patch.FromReport(report, code)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "patch:", err)
-		os.Exit(1)
+		return fmt.Errorf("patch: %w", err)
 	}
 
 	e := buildEnricher()
@@ -49,6 +42,7 @@ func main() {
 		}
 		fmt.Println(line)
 	}
+	return nil
 }
 
 // buildEnricher assembles providers by available keys. Multiple keys -> a
@@ -63,11 +57,11 @@ func buildEnricher() enrich.Enricher {
 	}
 	switch len(clients) {
 	case 0:
-		return enrich.StubEnricher{} // offline: pipeline still runs end-to-end
+		return enrich.StubEnricher{}
 	case 1:
 		return enrich.NewLLMEnricher(clients[0])
 	default:
-		return enrich.NewLLMEnricher(llm.NewFallback(clients...)) // Anthropic -> OpenAI
+		return enrich.NewLLMEnricher(llm.NewFallback(clients...))
 	}
 }
 
@@ -76,12 +70,4 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
-}
-
-func loadCanonical(path string) (*ir.Document, error) {
-	doc, err := specfile.New(path).Extract(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return canonicalize.Apply(doc)
 }

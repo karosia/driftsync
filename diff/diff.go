@@ -100,6 +100,7 @@ const (
 	PropertyAdded       ChangeKind = "property_added"
 	PropertyRemoved     ChangeKind = "property_removed"
 	PropertyTypeChanged ChangeKind = "property_type_changed"
+	PropertyRenamed     ChangeKind = "property_renamed"
 	RequiredAdded       ChangeKind = "required_added"
 	RequiredRemoved     ChangeKind = "required_removed"
 )
