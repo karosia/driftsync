@@ -1,7 +1,7 @@
-// cmd/driftsync/diff.go
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -9,38 +9,43 @@ import (
 )
 
 func cmdDiff(args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("usage: driftsync diff <published-spec> <code-spec>")
+	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+	format := fs.String("format", "text", "output format: text | md | json")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	published, err := loadCanonical(args[0])
+	rest := fs.Args()
+	if len(rest) < 2 {
+		return fmt.Errorf("usage: driftsync diff [--format text|md|json] <published-spec> <code-spec>")
+	}
+
+	published, err := loadCanonical(rest[0])
 	if err != nil {
 		return fmt.Errorf("load published: %w", err)
 	}
-	code, err := loadCanonical(args[1])
+	code, err := loadCanonical(rest[1])
 	if err != nil {
 		return fmt.Errorf("load code: %w", err)
 	}
 
 	report := diff.Diff(published, code)
-	if len(report.Changes) == 0 {
-		fmt.Println("no drift: published spec matches code")
-		return nil
-	}
-	fmt.Printf("%d change(s), %d breaking:\n\n", len(report.Changes), report.Breaking())
-	for _, c := range report.Changes {
-		line := fmt.Sprintf("  [%-8s] %-26s %s", c.Severity, c.Kind, c.Location)
-		if c.From != "" || c.To != "" {
-			line += fmt.Sprintf("  (%s -> %s)", c.From, c.To)
+
+	switch *format {
+	case "md":
+		fmt.Print(report.Markdown())
+	case "json":
+		out, err := report.JSON()
+		if err != nil {
+			return err
 		}
-		if c.Note != "" {
-			line += "  [" + c.Note + "]"
-		}
-		fmt.Println(line)
+		fmt.Println(out)
+	default:
+		fmt.Print(report.Text())
 	}
 
-	// CI gate: breaking drift -> exit 1. Handled here (not via returned error)
-	// so the message above already printed and the code is deterministic.
+	// CI gate stays on stderr/exit so it works with any format on stdout.
 	if report.Breaking() > 0 {
+		fmt.Fprintf(os.Stderr, "%d breaking change(s)\n", report.Breaking())
 		os.Exit(1)
 	}
 	return nil

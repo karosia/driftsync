@@ -25,6 +25,17 @@ adjust the marked spots (extraction command, spec paths).
 
 You can use both: verify on PRs, sync on `main`.
 
+## How the PR gets its body
+
+The sync workflows run `driftsync diff --format md` to write a markdown drift
+report to `drift-report.md`, then pass it to `create-pull-request` via
+`body-path`. So the PR description *is* the drift report — a table of what
+changed, breaking items first. Don't delete `drift-report.md` before the PR
+step; the `Apply fixes` step removes the generated spec but keeps the report.
+
+The report file is never committed — `create-pull-request` only commits the spec
+change, so the report shows up as the PR body, not as a file in the diff.
+
 ## The only stack-specific part
 
 Every workflow is identical except **Step 1 — extracting a spec from your

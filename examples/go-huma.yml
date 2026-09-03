@@ -46,10 +46,14 @@ jobs:
       - name: Extract spec from code
         run: go run ./tools/genspec        # produces openapi.gen.yaml
 
-      # ── STEP 2: detect drift (log only; still open a PR if breaking) ─────────
+      # ── STEP 2: detect drift, write a markdown report for the PR body ────────
+      # continue-on-error so a breaking diff (exit 1) still lets the PR open.
       - name: Detect drift
         continue-on-error: true
-        run: driftsync diff docs/openapi.yaml openapi.gen.yaml
+        run: |
+          driftsync diff --format md docs/openapi.yaml openapi.gen.yaml > drift-report.md
+          echo "----- drift report -----"
+          cat drift-report.md
 
       # ── STEP 3: apply fixes to the published spec ────────────────────────────
       - name: Apply fixes
@@ -60,15 +64,14 @@ jobs:
           driftsync apply docs/openapi.yaml openapi.gen.yaml > docs/openapi.new
           mv docs/openapi.new docs/openapi.yaml
           rm -f openapi.gen.yaml
+          # keep drift-report.md — Step 4 reads it as the PR body
 
-      # ── STEP 4: open a PR (idempotent: no changes -> no PR) ──────────────────
+      # ── STEP 4: open a PR, using the drift report as the PR body ─────────────
       - name: Open sync PR
         uses: peter-evans/create-pull-request@v6
         with:
           branch: drift/sync-openapi
           title: "docs: sync OpenAPI spec with code"
           commit-message: "docs: sync OpenAPI spec with code (automated)"
-          body: |
-            Automated API documentation drift fix.
-            Review before merging — check any **BREAKING** items in the drift log.
+          body-path: drift-report.md
           labels: documentation, automated

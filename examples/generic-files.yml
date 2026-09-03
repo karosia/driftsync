@@ -37,10 +37,15 @@ jobs:
       - name: Generate code spec
         run: make openapi        # <- replace with your own command
 
+      # ── STEP 2: detect drift, write a markdown report for the PR body ────────
       - name: Detect drift
         continue-on-error: true
-        run: driftsync diff "$PUBLISHED_SPEC" "$CODE_SPEC"
+        run: |
+          driftsync diff --format md "$PUBLISHED_SPEC" "$CODE_SPEC" > drift-report.md
+          echo "----- drift report -----"
+          cat drift-report.md
 
+      # ── STEP 3: apply fixes ──────────────────────────────────────────────────
       - name: Apply fixes
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -49,14 +54,14 @@ jobs:
           driftsync apply "$PUBLISHED_SPEC" "$CODE_SPEC" > "$PUBLISHED_SPEC.new"
           mv "$PUBLISHED_SPEC.new" "$PUBLISHED_SPEC"
           rm -f "$CODE_SPEC"
+          # keep drift-report.md — Step 4 reads it as the PR body
 
+      # ── STEP 4: open a PR, using the drift report as the PR body ─────────────
       - name: Open sync PR
         uses: peter-evans/create-pull-request@v6
         with:
           branch: drift/sync-openapi
           title: "docs: sync OpenAPI spec with code"
           commit-message: "docs: sync OpenAPI spec with code (automated)"
-          body: |
-            Automated API documentation drift fix.
-            Review before merging — check any **BREAKING** items in the drift log.
+          body-path: drift-report.md
           labels: documentation, automated
