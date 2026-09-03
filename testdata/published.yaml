@@ -1,0 +1,46 @@
+# testdata/published.yaml — 뒤처진 발행본 (3.0)
+openapi: 3.0.3
+info:
+  title: User API
+  version: 1.0.0
+paths:
+  /users/{id}:
+    get:
+      operationId: get-user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+  /users:
+    post:
+      operationId: create-user
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '201':
+          description: Created
+components:
+  schemas:
+    User:
+      type: object
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+        legacy:
+          type: string
