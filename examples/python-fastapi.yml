@@ -1,0 +1,76 @@
+# drift-sync.yml — Python + FastAPI
+#
+# FastAPI exposes the full spec via app.openapi(). We dump it to a file, then
+# driftsync reads it like any other published spec. No adapter needed — the code
+# side is just a file, same as the published side.
+#
+# FastAPI emits OpenAPI 3.x already, so no version conversion is required.
+#
+# Copy this to .github/workflows/drift-sync.yml in your project.
+
+name: API Doc Drift Sync
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - name: Build driftsync
+        run: |
+          git clone https://github.com/karosia/driftsync /tmp/driftsync
+          (cd /tmp/driftsync && go build -o /usr/local/bin/driftsync ./cmd/driftsync)
+
+      # ── STEP 1: dump the spec from FastAPI ──────────────────────────────────
+      # Adjust "app.main:app" to your ASGI app import path.
+      - name: Install deps
+        run: pip install -r requirements.txt pyyaml
+      - name: Extract spec from code
+        run: |
+          python - <<'PY'
+          import importlib, json, yaml
+          module, attr = "app.main:app".split(":")   # <- edit to your app path
+          app = getattr(importlib.import_module(module), attr)
+          spec = app.openapi()
+          with open("openapi.gen.yaml", "w") as f:
+              yaml.safe_dump(spec, f, sort_keys=False)
+          PY
+
+      # ── STEP 2: detect drift ─────────────────────────────────────────────────
+      - name: Detect drift
+        continue-on-error: true
+        run: driftsync diff docs/openapi.yaml openapi.gen.yaml
+
+      # ── STEP 3: apply fixes ──────────────────────────────────────────────────
+      - name: Apply fixes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          driftsync apply docs/openapi.yaml openapi.gen.yaml > docs/openapi.new
+          mv docs/openapi.new docs/openapi.yaml
+          rm -f openapi.gen.yaml
+
+      # ── STEP 4: open a PR ────────────────────────────────────────────────────
+      - name: Open sync PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: drift/sync-openapi
+          title: "docs: sync OpenAPI spec with code"
+          commit-message: "docs: sync OpenAPI spec with code (automated)"
+          body: |
+            Automated API documentation drift fix (source: FastAPI app.openapi()).
+            Review before merging — check any **BREAKING** items in the drift log.
+          labels: documentation, automated

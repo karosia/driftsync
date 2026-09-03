@@ -1,0 +1,80 @@
+# drift-sync.yml — Node + NestJS (@nestjs/swagger)
+#
+# NestJS builds an OpenAPI document via @nestjs/swagger. We write it to a file in
+# a small script, then driftsync reads it. NestJS emits 3.x, so no conversion.
+#
+# Copy this to .github/workflows/drift-sync.yml in your project.
+
+name: API Doc Drift Sync
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Build driftsync
+        run: |
+          git clone https://github.com/karosia/driftsync /tmp/driftsync
+          (cd /tmp/driftsync && go build -o /usr/local/bin/driftsync ./cmd/driftsync)
+
+      # ── STEP 1: emit the spec from NestJS ───────────────────────────────────
+      # Add a script to your repo (scripts/genspec.ts) that builds the document
+      # WITHOUT starting the HTTP server, e.g.:
+      #
+      #   import { NestFactory } from '@nestjs/core';
+      #   import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+      #   import { AppModule } from '../src/app.module';
+      #   import { writeFileSync } from 'fs';
+      #   import * as yaml from 'js-yaml';
+      #   async function main() {
+      #     const app = await NestFactory.create(AppModule, { logger: false });
+      #     const config = new DocumentBuilder().setTitle('API').setVersion('1.0').build();
+      #     const doc = SwaggerModule.createDocument(app, config);
+      #     writeFileSync('openapi.gen.yaml', yaml.dump(doc));
+      #     await app.close();
+      #   }
+      #   main();
+      - name: Install deps
+        run: npm ci
+      - name: Extract spec from code
+        run: npx ts-node scripts/genspec.ts      # -> openapi.gen.yaml
+
+      # ── STEP 2: detect drift ─────────────────────────────────────────────────
+      - name: Detect drift
+        continue-on-error: true
+        run: driftsync diff docs/openapi.yaml openapi.gen.yaml
+
+      # ── STEP 3: apply fixes ──────────────────────────────────────────────────
+      - name: Apply fixes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          driftsync apply docs/openapi.yaml openapi.gen.yaml > docs/openapi.new
+          mv docs/openapi.new docs/openapi.yaml
+          rm -f openapi.gen.yaml
+
+      # ── STEP 4: open a PR ────────────────────────────────────────────────────
+      - name: Open sync PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: drift/sync-openapi
+          title: "docs: sync OpenAPI spec with code"
+          commit-message: "docs: sync OpenAPI spec with code (automated)"
+          body: |
+            Automated API documentation drift fix (source: @nestjs/swagger).
+            Review before merging — check any **BREAKING** items in the drift log.
+          labels: documentation, automated
