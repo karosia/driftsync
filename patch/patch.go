@@ -35,70 +35,20 @@ type Patch struct {
 // The code document supplies the authoritative values (code-first authority).
 // Scope (this slice): schema-property drifts. Operation/param/response patches
 // come next; those changes carry an empty Target and are skipped here.
+//
+// A shared schema drifts once per direction (request/response) for severity, but
+// a document edit is direction-agnostic, so identical patches are deduped here.
 func FromReport(report *diff.Report, code *ir.Document) ([]Patch, error) {
 	var codeRoot yaml.Node
 	if err := yaml.Unmarshal(code.Raw, &codeRoot); err != nil {
 		return nil, fmt.Errorf("patch: parse code doc: %w", err)
 	}
 
-	var patches []Patch
+	var raw []Patch
 	for _, c := range report.Changes {
-		t := c.Target
-		if t.Schema == "" {
-			continue // not a schema-property change; out of scope this slice
-		}
-		propPath := func(prop string) string {
-			return "/components/schemas/" + esc(t.Schema) + "/properties/" + esc(prop)
-		}
-		reqPath := "/components/schemas/" + esc(t.Schema) + "/required"
-
-		switch c.Kind {
-		case diff.PropertyRemoved:
-			patches = append(patches, Patch{
-				Op: OpRemove, Path: propPath(t.Property),
-				Reason: reason(c), Severity: c.Severity,
-			})
-
-		case diff.PropertyAdded:
-			patches = append(patches, Patch{
-				Op: OpAdd, Path: propPath(t.Property),
-				Value:  extract(&codeRoot, "components", "schemas", t.Schema, "properties", t.Property),
-				Reason: reason(c), Severity: c.Severity,
-			})
-
-		case diff.PropertyTypeChanged:
-			patches = append(patches, Patch{
-				Op: OpReplace, Path: propPath(t.Property),
-				Value:  extract(&codeRoot, "components", "schemas", t.Schema, "properties", t.Property),
-				Reason: reason(c), Severity: c.Severity,
-			})
-
-		case diff.PropertyRenamed:
-			// A rename = remove the old name + add the new one (copied from code).
-			patches = append(patches,
-				Patch{Op: OpRemove, Path: propPath(c.From), Reason: reason(c), Severity: c.Severity},
-				Patch{Op: OpAdd, Path: propPath(c.To),
-					Value:  extract(&codeRoot, "components", "schemas", t.Schema, "properties", c.To),
-					Reason: reason(c), Severity: c.Severity},
-			)
-
-		case diff.RequiredAdded:
-			// append to the required array (JSON Pointer "-" = end of array)
-			patches = append(patches, Patch{
-				Op: OpAdd, Path: reqPath + "/-", Value: scalarNode(t.Property),
-				Reason: reason(c), Severity: c.Severity,
-			})
-
-		case diff.RequiredRemoved:
-			// Removing an array element is by value here; the applier resolves the
-			// index (JSON Pointer addresses arrays by index, not value).
-			patches = append(patches, Patch{
-				Op: OpRemove, Path: reqPath, Value: scalarNode(t.Property),
-				Reason: reason(c), Severity: c.Severity,
-			})
-		}
+		raw = append(raw, patchesFor(c, &codeRoot)...)
 	}
-	return patches, nil
+	return dedup(raw), nil
 }
 
 // ---- helpers -----------------------------------------------------------------
@@ -145,4 +95,94 @@ func reason(c diff.Change) string {
 		r += " (" + c.Note + ")"
 	}
 	return r
+}
+
+// patchesFor produces the patch intents for a single change (empty if the
+// change isn't a schema-property drift). Logic identical to the old switch.
+func patchesFor(c diff.Change, codeRoot *yaml.Node) []Patch {
+	t := c.Target
+	if t.Schema == "" {
+		return nil // not a schema-property change; out of scope this slice
+	}
+	propPath := func(prop string) string {
+		return "/components/schemas/" + esc(t.Schema) + "/properties/" + esc(prop)
+	}
+	reqPath := "/components/schemas/" + esc(t.Schema) + "/required"
+
+	switch c.Kind {
+	case diff.PropertyRemoved:
+		return []Patch{{
+			Op: OpRemove, Path: propPath(t.Property),
+			Reason: reason(c), Severity: c.Severity,
+		}}
+
+	case diff.PropertyAdded:
+		return []Patch{{
+			Op: OpAdd, Path: propPath(t.Property),
+			Value:  extract(codeRoot, "components", "schemas", t.Schema, "properties", t.Property),
+			Reason: reason(c), Severity: c.Severity,
+		}}
+
+	case diff.PropertyTypeChanged:
+		return []Patch{{
+			Op: OpReplace, Path: propPath(t.Property),
+			Value:  extract(codeRoot, "components", "schemas", t.Schema, "properties", t.Property),
+			Reason: reason(c), Severity: c.Severity,
+		}}
+
+	case diff.PropertyRenamed:
+		return []Patch{
+			{Op: OpRemove, Path: propPath(c.From), Reason: reason(c), Severity: c.Severity},
+			{Op: OpAdd, Path: propPath(c.To),
+				Value:  extract(codeRoot, "components", "schemas", t.Schema, "properties", c.To),
+				Reason: reason(c), Severity: c.Severity},
+		}
+
+	case diff.RequiredAdded:
+		return []Patch{{
+			Op: OpAdd, Path: reqPath + "/-", Value: scalarNode(t.Property),
+			Reason: reason(c), Severity: c.Severity,
+		}}
+
+	case diff.RequiredRemoved:
+		return []Patch{{
+			Op: OpRemove, Path: reqPath, Value: scalarNode(t.Property),
+			Reason: reason(c), Severity: c.Severity,
+		}}
+	}
+	return nil
+}
+
+// dedup collapses patches that make the SAME edit (same op+path+value). A
+// document edit is direction-agnostic — request and response drift on a shared
+// schema produce identical patches — so we keep one and retain the WORST
+// severity (e.g. info in request but BREAKING in response -> BREAKING).
+func dedup(in []Patch) []Patch {
+	seen := map[string]int{} // key -> index in out
+	var out []Patch
+	for _, p := range in {
+		key := string(p.Op) + " " + p.Path + " " + valueKey(p)
+		if idx, ok := seen[key]; ok {
+			if p.Severity > out[idx].Severity {
+				out[idx].Severity = p.Severity
+			}
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, p)
+	}
+	return out
+}
+
+// valueKey distinguishes patches sharing op+path but carrying different values
+// (e.g. two different appends to the same "required/-" position).
+func valueKey(p Patch) string {
+	if p.Value == nil {
+		return ""
+	}
+	out, err := yaml.Marshal(p.Value)
+	if err != nil {
+		return ""
+	}
+	return strings.Join(strings.Fields(strings.TrimSpace(string(out))), " ")
 }
