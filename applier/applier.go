@@ -67,7 +67,7 @@ func order(patches []patch.Patch) []patch.Patch {
 
 // arrayRemoveIndex returns the numeric last token of a remove-op path, or -1.
 func arrayRemoveIndex(p patch.Patch) int {
-	if p.Op != patch.OpRemove {
+	if p.Op != patch.OpRemove || p.Match != nil {
 		return -1
 	}
 	toks := parsePointer(p.Path)
@@ -81,15 +81,26 @@ func arrayRemoveIndex(p patch.Patch) int {
 	return n
 }
 
-// applyOne resolves p.Path against root and performs the op.
+// applyOne resolves p and performs the op.
 func applyOne(root *yaml.Node, p patch.Patch) error {
+	// Array-element ops identified by field values (parameters by name+in).
+	if p.Match != nil {
+		return applyMatched(root, p)
+	}
+
 	toks := parsePointer(p.Path)
 	if len(toks) == 0 {
 		return fmt.Errorf("empty pointer")
 	}
 	parentToks, last := toks[:len(toks)-1], toks[len(toks)-1]
 
-	parent, err := resolve(root, parentToks)
+	var parent *yaml.Node
+	var err error
+	if p.CreatePath && p.Op == patch.OpAdd {
+		parent, err = ensureMapPath(root, parentToks) // create missing ancestors (new paths)
+	} else {
+		parent, err = resolve(root, parentToks)
+	}
 	if err != nil {
 		return err
 	}
@@ -106,14 +117,57 @@ func applyOne(root *yaml.Node, p patch.Patch) error {
 	}
 }
 
+// applyMatched resolves p.Path to an array and remove/replaces the element whose
+// fields all equal p.Match (identity-based, so array order doesn't matter).
+func applyMatched(root *yaml.Node, p patch.Patch) error {
+	arr, err := resolve(root, parsePointer(p.Path))
+	if err != nil {
+		return err
+	}
+	if arr.Kind != yaml.SequenceNode {
+		return fmt.Errorf("match target is not an array")
+	}
+	idx := findMatch(arr, p.Match)
+	if idx < 0 {
+		return fmt.Errorf("no array element matches %v", p.Match)
+	}
+	switch p.Op {
+	case patch.OpRemove:
+		arr.Content = append(arr.Content[:idx], arr.Content[idx+1:]...)
+	case patch.OpReplace:
+		arr.Content[idx] = cloneNode(p.Value)
+	default:
+		return fmt.Errorf("op %q unsupported with match", p.Op)
+	}
+	return nil
+}
+
+func findMatch(arr *yaml.Node, match map[string]string) int {
+	for i, el := range arr.Content {
+		if el.Kind != yaml.MappingNode {
+			continue
+		}
+		ok := true
+		for k, v := range match {
+			if nodeVal(el, k) != v {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return i
+		}
+	}
+	return -1
+}
+
 // ---- op implementations ------------------------------------------------------
 
 func addAt(parent *yaml.Node, key string, p patch.Patch) error {
 	switch parent.Kind {
 	case yaml.MappingNode:
 		if v := mapGet(parent, key); v != nil {
-			// key already present: treat add as replace (idempotent-ish)
-			return replaceInMap(parent, key, p.Value)
+			return replaceInMap(parent, key, p.Value) // key present: treat as replace
 		}
 		parent.Content = append(parent.Content, scalarNode(key), cloneNode(p.Value))
 		return nil
@@ -162,8 +216,7 @@ func removeAt(parent *yaml.Node, key string, p patch.Patch) error {
 		}
 		return fmt.Errorf("remove target %q not found", key)
 	case yaml.SequenceNode:
-		// Two removal styles: by numeric index, or by value (patch carries the
-		// value to find — this is the deferred RequiredRemoved case).
+		// By numeric index, or by value (patch carries the value to find).
 		if idx, err := strconv.Atoi(key); err == nil {
 			if idx < 0 || idx >= len(parent.Content) {
 				return fmt.Errorf("array index %d out of range", idx)
@@ -202,7 +255,26 @@ func replaceInMap(m *yaml.Node, key string, val *yaml.Node) error {
 	return fmt.Errorf("key %q not found", key)
 }
 
-// ---- pointer resolution ------------------------------------------------------
+// ---- path resolution ---------------------------------------------------------
+
+// ensureMapPath walks tokens, creating an empty mapping for any missing key.
+// Used only for operation adds, so a brand-new /paths/<path> is created before
+// the method is inserted under it (order-independent across sibling methods).
+func ensureMapPath(root *yaml.Node, toks []string) (*yaml.Node, error) {
+	n := root
+	for _, t := range toks {
+		if n.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("cannot create under %v at %q", n.Kind, t)
+		}
+		next := mapGet(n, t)
+		if next == nil {
+			next = &yaml.Node{Kind: yaml.MappingNode}
+			n.Content = append(n.Content, scalarNode(t), next)
+		}
+		n = next
+	}
+	return n, nil
+}
 
 // parsePointer splits a JSON Pointer into decoded tokens (RFC 6901): leading "/"
 // dropped, then "~1" -> "/" and "~0" -> "~" per token.
@@ -260,6 +332,13 @@ func mapGet(m *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
+}
+
+func nodeVal(m *yaml.Node, key string) string {
+	if v := mapGet(m, key); v != nil {
+		return v.Value
+	}
+	return ""
 }
 
 func scalarNode(v string) *yaml.Node {

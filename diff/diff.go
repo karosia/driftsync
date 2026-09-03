@@ -3,7 +3,6 @@ package diff
 import (
 	"sort"
 	"strings"
-	"unicode"
 
 	base "github.com/pb33f/libopenapi/datamodel/high/base"
 	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
@@ -103,8 +102,23 @@ const (
 	PropertyTypeChanged ChangeKind = "property_type_changed"
 	RequiredAdded       ChangeKind = "required_added"
 	RequiredRemoved     ChangeKind = "required_removed"
-	PropertyRenamed     ChangeKind = "property_renamed"
 )
+
+// Target is the machine-addressable location of a change, so downstream (patch)
+// never parses the human-readable Location string. Fields are populated per
+// change kind; unused ones stay zero.
+type Target struct {
+	// schema-property changes
+	Schema    string
+	Direction Direction
+	Property  string
+	// operation / parameter / response changes
+	Method     string
+	Path       string
+	ParamName  string
+	ParamIn    string
+	StatusCode string
+}
 
 type Change struct {
 	Kind     ChangeKind
@@ -112,15 +126,11 @@ type Change struct {
 	From     string
 	To       string
 	Severity Severity
-	Note     string // e.g. which rename rule matched (audit/transparency)
-	Target   Target // NEW: structured target (zero value for non-schema changes)
+	Note     string
+	Target   Target
 }
 
 type Report struct{ Changes []Change }
-
-func (r *Report) add(k ChangeKind, loc, from, to string, sev Severity) {
-	r.Changes = append(r.Changes, Change{Kind: k, Location: loc, From: from, To: to, Severity: sev})
-}
 
 func (r *Report) Breaking() int {
 	n := 0
@@ -159,21 +169,23 @@ func collectOperationObjects(d *ir.Document) map[string]*v3.Operation {
 }
 
 func diffOperations(a, b *ir.Document, r *Report) {
-	ao := collectOperationObjects(a)
-	bo := collectOperationObjects(b)
+	ao, bo := collectOperationObjects(a), collectOperationObjects(b)
 	for _, k := range sortedKeysMissing(ao, bo) {
-		r.add(OperationRemoved, k, "", "", Breaking)
+		m, p := splitOpKey(k)
+		r.Changes = append(r.Changes, Change{Kind: OperationRemoved, Location: k,
+			Severity: Breaking, Target: Target{Method: m, Path: p}})
 	}
 	for _, k := range sortedKeysMissing(bo, ao) {
-		r.add(OperationAdded, k, "", "", Info)
+		m, p := splitOpKey(k)
+		r.Changes = append(r.Changes, Change{Kind: OperationAdded, Location: k,
+			Severity: Info, Target: Target{Method: m, Path: p}})
 	}
 }
 
 // ---- per-operation: parameters + response codes ------------------------------
 
 func diffOperationDetails(a, b *ir.Document, r *Report) {
-	ao := collectOperationObjects(a)
-	bo := collectOperationObjects(b)
+	ao, bo := collectOperationObjects(a), collectOperationObjects(b)
 	for _, key := range sortedKeysCommon(ao, bo) {
 		diffParameters(key, ao[key], bo[key], r)
 		diffResponseCodes(key, ao[key], bo[key], r)
@@ -197,23 +209,30 @@ func collectParams(op *v3.Operation) map[string]paramInfo {
 }
 
 func diffParameters(opKey string, a, b *v3.Operation, r *Report) {
-	ap := collectParams(a)
-	bp := collectParams(b)
+	ap, bp := collectParams(a), collectParams(b)
+	method, path := splitOpKey(opKey)
+	tgt := func(pk string) Target {
+		in, name := splitParamKey(pk)
+		return Target{Method: method, Path: path, ParamName: name, ParamIn: in}
+	}
 	loc := func(k string) string { return opKey + " (param " + k + ")" }
 
 	for _, k := range sortedKeysMissing(ap, bp) { // params are always request-direction
-		r.add(ParameterRemoved, loc(k), "", "", removedSeverity(Request))
+		r.Changes = append(r.Changes, Change{Kind: ParameterRemoved, Location: loc(k),
+			Severity: removedSeverity(Request), Target: tgt(k)})
 	}
 	for _, k := range sortedKeysMissing(bp, ap) {
-		r.add(ParameterAdded, loc(k), "", "", addedSeverity(Request, bp[k].required))
+		r.Changes = append(r.Changes, Change{Kind: ParameterAdded, Location: loc(k),
+			Severity: addedSeverity(Request, bp[k].required), Target: tgt(k)})
 	}
 	for _, k := range sortedKeysCommon(ap, bp) {
 		if ap[k].sig != bp[k].sig {
-			r.add(ParameterTypeChanged, loc(k), ap[k].sig, bp[k].sig, typeChangeSeverity)
+			r.Changes = append(r.Changes, Change{Kind: ParameterTypeChanged, Location: loc(k),
+				From: ap[k].sig, To: bp[k].sig, Severity: typeChangeSeverity, Target: tgt(k)})
 		}
 		if ap[k].required != bp[k].required {
-			r.add(ParameterRequiredChanged, loc(k), "", "",
-				requiredFlipSeverity(Request, bp[k].required))
+			r.Changes = append(r.Changes, Change{Kind: ParameterRequiredChanged, Location: loc(k),
+				Severity: requiredFlipSeverity(Request, bp[k].required), Target: tgt(k)})
 		}
 	}
 }
@@ -230,13 +249,17 @@ func collectResponseCodes(op *v3.Operation) map[string]bool {
 }
 
 func diffResponseCodes(opKey string, a, b *v3.Operation, r *Report) {
-	ac := collectResponseCodes(a)
-	bc := collectResponseCodes(b)
+	ac, bc := collectResponseCodes(a), collectResponseCodes(b)
+	method, path := splitOpKey(opKey)
 	for _, code := range sortedKeysMissing(ac, bc) {
-		r.add(ResponseRemoved, opKey+" (response "+code+")", "", "", Breaking)
+		r.Changes = append(r.Changes, Change{Kind: ResponseRemoved,
+			Location: opKey + " (response " + code + ")", Severity: Breaking,
+			Target: Target{Method: method, Path: path, StatusCode: code}})
 	}
 	for _, code := range sortedKeysMissing(bc, ac) {
-		r.add(ResponseAdded, opKey+" (response "+code+")", "", "", Info)
+		r.Changes = append(r.Changes, Change{Kind: ResponseAdded,
+			Location: opKey + " (response " + code + ")", Severity: Info,
+			Target: Target{Method: method, Path: path, StatusCode: code}})
 	}
 }
 
@@ -297,19 +320,19 @@ func refName(ref string) string { // "#/components/schemas/User" -> "User"
 }
 
 func diffDirectionalSchemas(a, b *ir.Document, r *Report) {
-	as := collectSchemas(a)
-	bs := collectSchemas(b)
+	as, bs := collectSchemas(a), collectSchemas(b)
 
 	// Presence is reported as info; real impact is decided at use sites below.
 	for _, name := range sortedKeysMissing(as, bs) {
-		r.add(SchemaRemoved, name, "", "", Info)
+		r.Changes = append(r.Changes, Change{Kind: SchemaRemoved, Location: name,
+			Severity: Info, Target: Target{Schema: name}})
 	}
 	for _, name := range sortedKeysMissing(bs, as) {
-		r.add(SchemaAdded, name, "", "", Info)
+		r.Changes = append(r.Changes, Change{Kind: SchemaAdded, Location: name,
+			Severity: Info, Target: Target{Schema: name}})
 	}
 
-	da := discoverDirections(a)
-	db := discoverDirections(b)
+	da, db := discoverDirections(a), discoverDirections(b)
 
 	for _, name := range sortedKeysCommon(as, bs) {
 		set := dirSet{req: da[name].req || db[name].req, resp: da[name].resp || db[name].resp}
@@ -343,6 +366,9 @@ func diffSchemaBody(name string, dir Direction, a, b *base.Schema, r *Report) {
 
 	removed := sortedKeysMissing(ap, bp)
 	added := sortedKeysMissing(bp, ap)
+
+	// Deterministic rename pass: pair removed<->added of the SAME signature.
+	// Ambiguous cases stay split — that's the fuzzy zone deferred to an LLM.
 	renames, remOnly, addOnly := matchRenames(removed, added, ap, bp)
 
 	for _, m := range renames {
@@ -414,42 +440,7 @@ func propSignature(sp *base.SchemaProxy) string {
 	return "type:?"
 }
 
-// ---- generic deterministic set helpers ---------------------------------------
-
-func sortedKeysMissing[V any](from, other map[string]V) []string {
-	var out []string
-	for k := range from {
-		if _, ok := other[k]; !ok {
-			out = append(out, k)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedKeysCommon[V any](a, b map[string]V) []string {
-	var out []string
-	for k := range a {
-		if _, ok := b[k]; ok {
-			out = append(out, k)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func toSet(xs []string) map[string]bool {
-	out := map[string]bool{}
-	for _, x := range xs {
-		out[x] = true
-	}
-	return out
-}
-
-func (r *Report) addNote(k ChangeKind, loc, from, to string, sev Severity, note string) {
-	r.Changes = append(r.Changes, Change{
-		Kind: k, Location: loc, From: from, To: to, Severity: sev, Note: note})
-}
+// ---- deterministic rename matching -------------------------------------------
 
 type renameMatch struct{ from, to, rule string }
 
@@ -463,8 +454,6 @@ func matchRenames(removed, added []string, ap, bp map[string]string) (
 	usedRemoved := map[string]bool{}
 	usedAdded := map[string]bool{}
 
-	// candidates: unused added props with the SAME signature as rp whose
-	// normalized name satisfies pred.
 	candidates := func(rp string, pred func(a, b string) bool) []string {
 		var c []string
 		for _, ad := range added {
@@ -530,10 +519,17 @@ func normalize(s string) string {
 		case '_', '-', ' ':
 			// drop separators
 		default:
-			b.WriteRune(unicode.ToLower(r))
+			b.WriteRune(toLower(r))
 		}
 	}
 	return b.String()
+}
+
+func toLower(r rune) rune {
+	if r >= 'A' && r <= 'Z' {
+		return r + ('a' - 'A')
+	}
+	return r
 }
 
 func levenshtein(a, b string) int {
@@ -568,10 +564,48 @@ func min3(a, b, c int) int {
 	return m
 }
 
-// Target is the machine-addressable location of a schema-property change,
-// so downstream (patch) never parses the human-readable Location string.
-type Target struct {
-	Schema    string // component schema name ("" for non-schema changes)
-	Direction Direction
-	Property  string // property name (for renames: the OLD name; see From/To)
+// ---- generic deterministic set helpers ---------------------------------------
+
+func splitOpKey(key string) (method, path string) {
+	if i := strings.IndexByte(key, ' '); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
+}
+
+func splitParamKey(k string) (in, name string) {
+	if i := strings.IndexByte(k, ':'); i >= 0 {
+		return k[:i], k[i+1:]
+	}
+	return "", k
+}
+
+func sortedKeysMissing[V any](from, other map[string]V) []string {
+	var out []string
+	for k := range from {
+		if _, ok := other[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedKeysCommon[V any](a, b map[string]V) []string {
+	var out []string
+	for k := range a {
+		if _, ok := b[k]; ok {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func toSet(xs []string) map[string]bool {
+	out := map[string]bool{}
+	for _, x := range xs {
+		out[x] = true
+	}
+	return out
 }
