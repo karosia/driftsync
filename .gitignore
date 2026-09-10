@@ -8,6 +8,14 @@
 # Test binary, built with `go test -c`
 *.test
 
+# Compiled CLI binary
+/driftsync
+
+# Generated-from-code spec and apply/enrich outputs
+/openapi.gen.yaml
+/fixed.yaml
+/*.fixed.yaml
+
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*
