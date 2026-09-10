@@ -1,0 +1,77 @@
+name: driftsync
+description: Detect (and optionally fix) OpenAPI documentation drift from a driftsync.yaml config.
+author: karosia
+branding:
+  icon: git-pull-request
+  color: purple
+
+inputs:
+  mode:
+    description: "What to run: check (gate CI on drift) or sync (rewrite the published spec)."
+    required: false
+    default: check
+  config:
+    description: Path to the driftsync config file.
+    required: false
+    default: driftsync.yaml
+  version:
+    description: 'driftsync version to install: a release tag (e.g. v0.2.0) or "latest".'
+    required: false
+    default: latest
+  report-file:
+    description: Also write the drift report to this file (useful as a PR body in sync mode).
+    required: false
+    default: ""
+  working-directory:
+    description: Directory to run driftsync in.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Install driftsync
+      shell: bash
+      env:
+        DRIFTSYNC_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        arch=$(uname -m)
+        case "$arch" in
+          x86_64|amd64) arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+        esac
+        if [ "$DRIFTSYNC_VERSION" = "latest" ]; then
+          base="https://github.com/karosia/driftsync/releases/latest/download"
+        else
+          base="https://github.com/karosia/driftsync/releases/download/${DRIFTSYNC_VERSION}"
+        fi
+        url="${base}/driftsync_${os}_${arch}.tar.gz"
+        echo "::group::Install driftsync"
+        if curl -fsSL "$url" -o /tmp/driftsync.tgz 2>/dev/null; then
+          tar -xzf /tmp/driftsync.tgz -C /tmp driftsync
+          sudo install /tmp/driftsync /usr/local/bin/driftsync
+          echo "installed prebuilt: $url"
+        else
+          echo "no prebuilt binary for ${os}/${arch} at $DRIFTSYNC_VERSION — building with 'go install'"
+          go install "github.com/karosia/driftsync/cmd/driftsync@${DRIFTSYNC_VERSION}"
+          sudo install "$(go env GOPATH)/bin/driftsync" /usr/local/bin/driftsync
+        fi
+        driftsync version
+        echo "::endgroup::"
+
+    - name: Run driftsync
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DRIFTSYNC_MODE: ${{ inputs.mode }}
+        DRIFTSYNC_CONFIG: ${{ inputs.config }}
+        DRIFTSYNC_REPORT_FILE: ${{ inputs.report-file }}
+      run: |
+        set -euo pipefail
+        args=("$DRIFTSYNC_MODE" --config "$DRIFTSYNC_CONFIG")
+        if [ -n "$DRIFTSYNC_REPORT_FILE" ]; then
+          args+=(--report-file "$DRIFTSYNC_REPORT_FILE")
+        fi
+        driftsync "${args[@]}"

@@ -1,0 +1,44 @@
+# driftsync.yaml — GENERIC
+#
+# Use this when your build already produces an OpenAPI file from code by some
+# means (a Makefile target, an existing codegen step, a committed artifact).
+# driftsync does not care how the code-side file was made — it just compares
+# two OpenAPI 3.x documents.
+#
+# Docs: https://github.com/karosia/driftsync#configuration
+
+version: 1
+
+# The spec you publish and maintain by hand — the contract your consumers see.
+published: docs/openapi.yaml
+
+code:
+  # A shell command that (re)generates the code-side spec. Runs with this file's
+  # directory as the working directory. Delete this line if `file` is already
+  # up to date in the repo (e.g. produced by an earlier CI step).
+  command: make openapi
+  # Where driftsync reads the code-side spec after `command` runs.
+  file: openapi.gen.yaml
+
+# ---- everything below is optional; values shown are the defaults ----
+
+# `driftsync check` exit policy:
+#   breaking → non-zero only on BREAKING drift (gate merges on real breakage)
+#   any      → non-zero on any drift at all (docs must always match)
+#   never    → always zero (report only)
+fail_on: breaking
+
+# `driftsync sync` LLM descriptions for brand-new fields:
+#   auto → on when ANTHROPIC_API_KEY / OPENAI_API_KEY is set, else skipped
+#   on   → always (offline stub text if no key)
+#   off  → never; new-field descriptions are left blank
+enrich: auto
+
+# Drift report format written to stdout: text | md | json
+report: text
+
+# Also write the report to this file (handy as a PR body). Omit for stdout only.
+# report_file: drift-report.md
+
+# Where `driftsync sync` writes the corrected spec. Omit to overwrite `published`.
+# sync_output: docs/openapi.yaml

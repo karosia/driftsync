@@ -1,0 +1,29 @@
+// Command genspec extracts the OpenAPI spec your huma API produces and writes it
+// to openapi.gen.yaml. driftsync's huma.driftsync.yaml runs it via
+// `go run ./tools/genspec`.
+//
+// This is the ONLY place your project imports driftsync, and it imports only the
+// extractor — none of the diff / patch / LLM machinery ends up in your build.
+package main
+
+import (
+	"context"
+	"os"
+
+	"github.com/karosia/driftsync/adapters/humaadapter"
+	// TODO: replace with the package that builds your huma.API.
+	app "your/module/app"
+)
+
+func main() {
+	// TODO: replace app.NewAPI() with your real API constructor.
+	api := app.NewAPI()
+
+	doc, err := humaadapter.New(api).Extract(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile("openapi.gen.yaml", doc.Raw, 0o644); err != nil {
+		panic(err)
+	}
+}

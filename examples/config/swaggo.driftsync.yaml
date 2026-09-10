@@ -1,0 +1,28 @@
+# driftsync.yaml — Go + gin with swaggo annotations
+#
+# swaggo generates a spec from your handler ANNOTATIONS (not the code itself) and
+# emits OpenAPI 2.0. driftsync is 3.x-only, so the command chains a 2.0 -> 3.x
+# conversion. Two things to keep in mind:
+#   1. you are comparing annotations against the published doc — stale
+#      annotations are their own kind of drift.
+#   2. the conversion step needs Node (npx) on the runner.
+#
+# Docs: https://github.com/karosia/driftsync#configuration
+
+version: 1
+
+published: docs/openapi.yaml
+
+code:
+  command: >
+    go run github.com/swaggo/swag/cmd/swag@latest init --outputTypes yaml -o ./_swagger &&
+    npx --yes swagger2openapi ./_swagger/swagger.yaml --yaml --outfile openapi.gen.yaml &&
+    rm -rf ./_swagger
+  file: openapi.gen.yaml
+
+# ---- optional (defaults shown) ----
+fail_on: breaking      # breaking | any | never
+enrich: auto           # auto | on | off
+report: text           # text | md | json
+# report_file: drift-report.md
+# sync_output: docs/openapi.yaml

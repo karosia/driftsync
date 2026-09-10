@@ -20,14 +20,26 @@ type command struct {
 	run  func(args []string) error
 }
 
+// version is overwritten at release time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func commands() []command {
 	return []command{
-		{"genspec", "extract code -> OpenAPI 3.1 file", cmdGenspec},
+		{"init", "scaffold a driftsync.yaml (and optional workflows)", cmdInit},
+		{"check", "config-driven: extract per driftsync.yaml, detect drift, gate CI", cmdCheck},
+		{"sync", "config-driven: extract, fix the published spec, write a report", cmdSync},
+		{"genspec", "extract code -> OpenAPI 3.1 file (built-in demo API)", cmdGenspec},
 		{"diff", "detect drift: <published> <code>", cmdDiff},
 		{"patch", "propose patches: <published> <code>", cmdPatch},
 		{"apply", "apply patches to published: <published> <code>", cmdApply},
 		{"enrich", "propose patches with LLM descriptions: <published> <code>", cmdEnrich},
+		{"version", "print the driftsync version", cmdVersion},
 	}
+}
+
+func cmdVersion([]string) error {
+	fmt.Println("driftsync", version)
+	return nil
 }
 
 func main() {

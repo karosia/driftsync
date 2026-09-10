@@ -1,0 +1,23 @@
+# driftsync.yaml — Go + huma (in-process extraction)
+#
+# huma is code-first and emits OpenAPI 3.1 natively. Extraction runs in-process
+# through a tiny generator in your repo: `tools/genspec/main.go`. Run
+# `driftsync init --stack huma` to scaffold it, then edit the one import line to
+# point at your real huma.API constructor.
+#
+# Docs: https://github.com/karosia/driftsync#configuration
+
+version: 1
+
+published: docs/openapi.yaml
+
+code:
+  command: go run ./tools/genspec
+  file: openapi.gen.yaml
+
+# ---- optional (defaults shown) ----
+fail_on: breaking      # breaking | any | never
+enrich: auto           # auto | on | off
+report: text           # text | md | json
+# report_file: drift-report.md
+# sync_output: docs/openapi.yaml
