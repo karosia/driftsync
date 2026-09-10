@@ -1,0 +1,35 @@
+# driftsync.yaml — Node + NestJS (@nestjs/swagger)
+#
+# NestJS builds an OpenAPI document via @nestjs/swagger. Add a small script to
+# your repo that writes it to a file WITHOUT starting the HTTP server, then
+# point `command` at it. A starter script:
+#
+#   // scripts/genspec.ts
+#   import { NestFactory } from '@nestjs/core';
+#   import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+#   import { AppModule } from '../src/app.module';
+#   import { writeFileSync } from 'fs';
+#   import * as yaml from 'js-yaml';
+#   (async () => {
+#     const app = await NestFactory.create(AppModule, { logger: false });
+#     const cfg = new DocumentBuilder().setTitle('API').setVersion('1.0').build();
+#     writeFileSync('openapi.gen.yaml', yaml.dump(SwaggerModule.createDocument(app, cfg)));
+#     await app.close();
+#   })();
+#
+# Docs: https://github.com/karosia/driftsync#configuration
+
+version: 1
+
+published: docs/openapi.yaml
+
+code:
+  command: npx ts-node scripts/genspec.ts
+  file: openapi.gen.yaml
+
+# ---- optional (defaults shown) ----
+fail_on: breaking      # breaking | any | never
+enrich: auto           # auto | on | off
+report: text           # text | md | json
+# report_file: drift-report.md
+# sync_output: docs/openapi.yaml

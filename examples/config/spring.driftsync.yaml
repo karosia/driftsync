@@ -1,0 +1,29 @@
+# driftsync.yaml — Java + Spring (springdoc-openapi)
+#
+# springdoc serves the spec at /v3/api-docs. The command below boots the packaged
+# jar, curls the spec to a file, and shuts the app down. If you use the
+# springdoc-openapi-maven-plugin you can generate the file without booting —
+# swap `command` for your `mvn` goal.
+#
+# Docs: https://github.com/karosia/driftsync#configuration
+
+version: 1
+
+published: docs/openapi.yaml
+
+code:
+  command: >
+    java -jar target/*.jar & APP_PID=$!;
+    for i in $(seq 1 30); do
+      curl -sf http://localhost:8080/v3/api-docs.yaml -o openapi.gen.yaml && break;
+      sleep 2;
+    done;
+    kill $APP_PID || true
+  file: openapi.gen.yaml
+
+# ---- optional (defaults shown) ----
+fail_on: breaking      # breaking | any | never
+enrich: auto           # auto | on | off
+report: text           # text | md | json
+# report_file: drift-report.md
+# sync_output: docs/openapi.yaml

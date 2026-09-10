@@ -1,0 +1,27 @@
+# driftsync.yaml — Python + FastAPI
+#
+# FastAPI exposes the full spec via `app.openapi()`. The command below dumps it
+# to a YAML file; driftsync then reads it like any other spec. No adapter, no
+# running server.
+#
+# Docs: https://github.com/karosia/driftsync#configuration
+
+version: 1
+
+published: docs/openapi.yaml
+
+code:
+  # Edit "app.main:app" to your ASGI app's import path.
+  command: >
+    python -c "import importlib, yaml;
+    m, a = 'app.main:app'.split(':');
+    app = getattr(importlib.import_module(m), a);
+    yaml.safe_dump(app.openapi(), open('openapi.gen.yaml', 'w'), sort_keys=False)"
+  file: openapi.gen.yaml
+
+# ---- optional (defaults shown) ----
+fail_on: breaking      # breaking | any | never
+enrich: auto           # auto | on | off
+report: text           # text | md | json
+# report_file: drift-report.md
+# sync_output: docs/openapi.yaml

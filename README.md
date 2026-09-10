@@ -41,8 +41,9 @@ That's the whole design philosophy. Everything below follows from it.
                                           differences                Patch     file
 ```
 
-1. **Extract** — get an OpenAPI spec out of your code (framework-specific; the
-   only part that depends on your stack).
+1. **Extract** — run the `code.command` from your `driftsync.yaml` to get an
+   OpenAPI spec out of your code (framework-specific; the only part that depends
+   on your stack).
 2. **Canonicalize** — normalize both specs to OpenAPI 3.1 and fold
    equivalent-but-differently-written constructs, so dialect differences don't
    look like drift.
@@ -58,7 +59,9 @@ That's the whole design philosophy. Everything below follows from it.
    silently.
 7. **PR** — open a pull request. You review and merge.
 
-Steps 2–7 are identical for every project. Only step 1 depends on your stack.
+Steps 2–7 are identical for every project. Only step 1 depends on your stack —
+and it's one line of config. `driftsync check` runs 1–4; `driftsync sync` runs
+1–6 and writes the fix; step 7 is your CI's PR step.
 
 ---
 
@@ -81,21 +84,73 @@ Steps 2–7 are identical for every project. Only step 1 depends on your stack.
 
 ## Quick start
 
-### 1. Build the CLI
+### 1. Install the CLI
 
 ```bash
-go install github.com/karosia/driftsync/cmd/driftsync@latest
+go install github.com/karosia/driftsync/cmd/driftsync@latest   # requires Go 1.25+
 ```
 
-Or build from source:
+Prebuilt binaries for Linux / macOS / Windows are attached to each
+[release](https://github.com/karosia/driftsync/releases).
+
+### 2. Create a `driftsync.yaml`
+
+`driftsync init` scaffolds one for your stack (`fastapi`, `nestjs`, `spring`,
+`huma`, `swaggo`, or `generic`):
 
 ```bash
-git clone https://github.com/karosia/driftsync
-cd driftsync
-go build -o driftsync ./cmd/driftsync   # requires Go 1.22+
+driftsync init --stack fastapi --with-workflows
 ```
 
-You get one binary with subcommands:
+That writes `driftsync.yaml` (and, with `--with-workflows`, two GitHub Actions
+workflows). Open `driftsync.yaml` and set two things — where your published spec
+lives, and the command that emits the spec from your code:
+
+```yaml
+version: 1
+published: docs/openapi.yaml          # the spec you maintain
+code:
+  command: >                          # how to produce the code-side spec
+    python -c "import importlib, yaml;
+    m, a = 'app.main:app'.split(':');
+    app = getattr(importlib.import_module(m), a);
+    yaml.safe_dump(app.openapi(), open('openapi.gen.yaml', 'w'), sort_keys=False)"
+  file: openapi.gen.yaml              # where the command wrote it
+```
+
+Full key reference: **[Configuration](#configuration)**.
+
+### 3. Run it
+
+```bash
+driftsync check    # extract per driftsync.yaml, diff, print a report,
+                   # exit non-zero on breaking drift  (for CI)
+
+driftsync sync     # same, then rewrite docs/openapi.yaml to match the code
+                   # and write drift-report.md  (review the change, commit via PR)
+```
+
+`check` is the gate; `sync` is the fix. Both read `driftsync.yaml` — you never
+pass file paths by hand.
+
+### 4. Automate it
+
+```yaml
+# .github/workflows/drift-check.yml
+- uses: actions/checkout@v4
+- uses: actions/setup-python@v5           # whatever your code.command needs
+  with: { python-version: "3.12" }
+- run: pip install -r requirements.txt pyyaml
+- uses: karosia/driftsync@v1
+  with: { mode: check }
+```
+
+See **[Automating with GitHub Actions](#automating-with-github-actions)**.
+
+### Lower-level commands
+
+`check` / `sync` cover the normal flow. The pipeline stages are also exposed
+directly, taking explicit file paths and no config:
 
 | Command | What it does |
 |---------|--------------|
@@ -105,44 +160,73 @@ You get one binary with subcommands:
 | `driftsync apply <published> <code>`  | write the fixed published spec to stdout |
 | `driftsync genspec [out]`             | extract a spec from the built-in demo API |
 
-### 2. Get an OpenAPI file out of your code
+---
 
-This is the only stack-specific step. See **[Stack guide](#stack-guide)** below.
-The result is a file, e.g. `openapi.gen.yaml`.
+## Configuration
 
-### 3. Run it locally
+`driftsync.yaml` lives at your repo root and is the single input to `check` and
+`sync`. Relative paths resolve against the file's directory; CLI flags override
+config keys.
 
-```bash
-driftsync diff  docs/openapi.yaml openapi.gen.yaml     # what drifted
-driftsync patch docs/openapi.yaml openapi.gen.yaml     # proposed edits
-driftsync apply docs/openapi.yaml openapi.gen.yaml > docs/openapi.fixed.yaml
+```yaml
+version: 1                        # required, must be 1
+
+published: docs/openapi.yaml      # required — the spec you publish and maintain
+
+code:                             # required — how to get the spec your code emits
+  command: make openapi           #   optional: shell command that (re)generates `file`.
+                                  #   Omit if `file` is already produced by an earlier step.
+                                  #   Runs with driftsync.yaml's directory as the working dir.
+                                  #   Chain conversions here too (e.g. swaggo 2.0 -> 3.x).
+  file: openapi.gen.yaml          #   required: path driftsync reads the code spec from
+
+# ---- everything below is optional; values shown are the defaults ----
+
+fail_on: breaking                 # `check` exit policy: breaking | any | never
+                                  #   breaking → non-zero only on BREAKING drift
+                                  #   any      → non-zero on any drift at all
+                                  #   never    → always zero (report only)
+
+enrich: auto                      # `sync` LLM descriptions for new fields:
+                                  #   auto → on when ANTHROPIC_API_KEY / OPENAI_API_KEY is set
+                                  #   on   → always (offline stub text with no key)
+                                  #   off  → never; new-field descriptions stay blank
+
+report: text                      # stdout report format: text | md | json
+
+report_file: drift-report.md      # also write the report here (omit = stdout only)
+
+sync_output: docs/openapi.yaml    # where `sync` writes the fix (omit = overwrite `published`)
 ```
 
-### 4. Automate it on every push
+Flag overrides: `--config`, `--format`, `--fail-on` (check), `--report-file`,
+`--output` (sync).
 
-Copy a workflow from [`examples/workflows/`](examples/workflows/) into
-`.github/workflows/`. See **[Automating with GitHub Actions](#automating-with-github-actions)**.
+Ready-made configs per stack: [`examples/config/`](examples/config/).
 
 ---
 
 ## Stack guide
 
-driftsync compares two OpenAPI files. Your only job is to make your code emit
-the first one. Find your stack:
+The stack-specific part is one line: the `code.command` in `driftsync.yaml` that
+produces an OpenAPI 3.x file. `driftsync init --stack <x>` fills it in; the table
+shows what you get.
 
-| Your stack | How to extract | Notes |
-|------------|----------------|-------|
-| **Go + huma** | in-process via `humaadapter` (a ~10-line `tools/genspec`) | emits 3.1 natively |
-| **Go + gin + swaggo** | `swag init` → convert 2.0→3.x | compares *annotations* vs docs |
-| **Python + FastAPI** | dump `app.openapi()` to a file | emits 3.x |
-| **Node + NestJS** | `@nestjs/swagger` document → file | emits 3.x |
-| **Java + Spring** | springdoc `/v3/api-docs` → file | emits 3.x |
-| **Anything else that emits a spec** | write it to a file | driftsync just reads it |
-| **No spec at all** (raw net/http, Express, Flask) | runtime capture or static analysis | future adapters — ask first |
+| `--stack` | `code.command` (abbreviated) | Notes |
+|-----------|------------------------------|-------|
+| `huma`    | `go run ./tools/genspec` | in-process, emits 3.1 natively; `init` also scaffolds `tools/genspec/main.go` |
+| `fastapi` | `python -c "... app.openapi() ..."` | dumps `app.openapi()`; no server |
+| `nestjs`  | `npx ts-node scripts/genspec.ts` | `@nestjs/swagger` document; add the small script |
+| `spring`  | boot jar → `curl /v3/api-docs.yaml` | springdoc; or use the maven plugin |
+| `swaggo`  | `swag init` → `swagger2openapi` | compares *annotations*, emits 2.0 → converted to 3.x (needs `npx`) |
+| `generic` | `make openapi` (yours) | anything that writes an OpenAPI 3.x file |
+
+Full example configs: [`examples/config/`](examples/config/).
 
 ### Go + huma (in-process)
 
-Add a small generator to your repo:
+huma is code-first and emits 3.1 natively. `driftsync init --stack huma`
+scaffolds `tools/genspec/main.go`:
 
 ```go
 // tools/genspec/main.go
@@ -153,7 +237,7 @@ import (
 	"os"
 
 	"github.com/karosia/driftsync/adapters/humaadapter"
-	"your/module/app" // your package that builds the huma.API
+	app "your/module/app" // your package that builds the huma.API
 )
 
 func main() {
@@ -166,38 +250,48 @@ func main() {
 }
 ```
 
-```bash
-go run ./tools/genspec   # -> openapi.gen.yaml
-```
+Edit the import line and constructor; `driftsync.yaml` already runs it via
+`go run ./tools/genspec`. This is the *only* place your project imports driftsync,
+and it imports only the extractor — none of the diff/patch/LLM machinery ends up
+in your build.
 
-This is the *only* place your project imports driftsync, and it only imports the
-extractor — none of the diff/patch/LLM machinery ends up in your build.
+### swaggo caveat
 
-### Everything else
-
-If your framework can emit a spec, emit it to a file and hand both files to
-driftsync. The ready-made workflows in
-[`examples/workflows/`](examples/workflows/) show the exact extraction command
-for FastAPI, NestJS, Spring, and gin+swaggo.
-
-> **gin + swaggo caveat:** swaggo generates from *annotations*, not the code
-> itself, and emits OpenAPI 2.0. Convert 2.0→3.x first (driftsync is 3.x-only),
-> and be aware you're comparing annotations against the published doc — stale
-> annotations are their own kind of drift.
+swaggo generates from *annotations*, not the code itself, and emits OpenAPI 2.0.
+The generated `code.command` converts 2.0 → 3.x with `swagger2openapi` (needs
+Node on the runner). You're comparing annotations against the published doc —
+stale annotations are their own kind of drift.
 
 ---
 
 ## Automating with GitHub Actions
 
-driftsync is built to run on every push. There are two modes:
+The composite action installs driftsync and runs `check` or `sync` against your
+`driftsync.yaml`. You supply two things around it: the **toolchain** your
+`code.command` needs, and (for sync) the **PR step**.
+
+```yaml
+- uses: karosia/driftsync@v1
+  with:
+    mode: check                 # check | sync            (default: check)
+    config: driftsync.yaml      # config path             (default: driftsync.yaml)
+    version: latest             # a release tag or latest (default: latest)
+    report-file: ""             # also write the report here
+    working-directory: "."
+```
+
+Copy [`examples/workflows/drift-check.yml`](examples/workflows/drift-check.yml)
+and [`drift-sync.yml`](examples/workflows/drift-sync.yml) (or run
+`driftsync init --stack <x> --with-workflows`). Many teams use both: **check**
+on PRs, **sync** on `main`.
 
 ### Mode A — Sync + PR
 
-On every push, detect drift, fix the published spec, and **open a pull request**.
-Nothing merges automatically — the PR is your approval gate.
+On every push to `main`: extract, fix the published spec, write
+`drift-report.md`, and **open a pull request**. Nothing merges automatically.
 
 ```yaml
-# .github/workflows/drift-sync.yml  (Go + huma shown; see examples/ for other stacks)
+# .github/workflows/drift-sync.yml
 name: API Doc Drift Sync
 on:
   push: { branches: [main] }
@@ -206,44 +300,33 @@ permissions:
   contents: write
   pull-requests: write
 jobs:
-  sync:
+  drift-sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
-      - name: Build driftsync
-        run: |
-          git clone https://github.com/karosia/driftsync /tmp/driftsync
-          (cd /tmp/driftsync && go build -o /usr/local/bin/driftsync ./cmd/driftsync)
-      - name: Extract spec from code       # <- your stack's step
-        run: go run ./tools/genspec
-      - name: Detect drift
-        continue-on-error: true
-        run: driftsync diff docs/openapi.yaml openapi.gen.yaml
-      - name: Apply fixes
+      - uses: actions/setup-go@v5           # ← toolchain for your code.command
+        with: { go-version-file: go.mod }
+      - uses: karosia/driftsync@v1
+        with:
+          mode: sync
+          report-file: drift-report.md
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          driftsync apply docs/openapi.yaml openapi.gen.yaml > docs/openapi.new
-          mv docs/openapi.new docs/openapi.yaml
-          rm -f openapi.gen.yaml
-      - name: Open sync PR
-        uses: peter-evans/create-pull-request@v6
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # optional
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}         # optional
+      - uses: peter-evans/create-pull-request@v6
         with:
           branch: drift/sync-openapi
           title: "docs: sync OpenAPI spec with code"
           commit-message: "docs: sync OpenAPI spec with code (automated)"
-          body: "Automated drift fix. Review before merging — check BREAKING items."
+          body-path: drift-report.md
           labels: documentation, automated
 ```
 
 ### Mode B — Verify only (gate CI)
 
-On every push/PR, **fail the check** if the docs drifted. No changes, no PR — a
-human fixes it. `driftsync diff` exits non-zero on breaking drift, turning the
-check red. Add it to branch protection to block merges.
+On every push/PR, **fail the check** if the docs drifted. No changes, no PR.
+`driftsync check` exits non-zero per `fail_on` in your config (`breaking` by
+default). Add the job to branch protection to block merges.
 
 ```yaml
 # .github/workflows/drift-check.yml
@@ -252,29 +335,20 @@ on:
   push: { branches: ['**'] }
   pull_request: {}
 jobs:
-  verify:
+  drift-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
-      - name: Build driftsync
-        run: |
-          git clone https://github.com/karosia/driftsync /tmp/driftsync
-          (cd /tmp/driftsync && go build -o /usr/local/bin/driftsync ./cmd/driftsync)
-      - name: Extract spec from code       # <- your stack's step
-        run: go run ./tools/genspec
-      - name: Verify docs match code
-        run: driftsync diff docs/openapi.yaml openapi.gen.yaml
+      - uses: actions/setup-go@v5           # ← toolchain for your code.command
+        with: { go-version-file: go.mod }
+      - uses: karosia/driftsync@v1
+        with: { mode: check }
 ```
-
-Many teams use both: **verify** on PRs, **sync** on `main`.
 
 ### Is the extraction automatic?
 
-Yes — once set up. You define the *extraction command* once (the "Extract spec"
-step, specific to your stack). After that, every push runs it automatically along
-with the rest of the pipeline. You never run it by hand.
+Yes. `code.command` in `driftsync.yaml` is defined once; `check` / `sync` run it
+every time, in CI and locally. You never run it by hand.
 
 ### Optional: LLM descriptions
 
@@ -327,8 +401,12 @@ driftsync/
 ├── applier/            # apply patches to the published file (partial-failure safe)
 ├── enrich/             # fill new-field descriptions (delegates to llm/)
 ├── llm/                # provider-neutral LLM clients (Anthropic, OpenAI) + fallback
+├── config/             # driftsync.yaml: parse, validate, embedded init templates
+├── run/                # orchestration behind `check` / `sync`
 ├── sampleapi/          # demo huma service (stands in for "your project")
-└── cmd/driftsync/      # the CLI (diff / patch / apply / enrich / genspec)
+├── cmd/driftsync/      # the CLI (init / check / sync / diff / patch / apply / enrich / genspec)
+├── action.yml          # composite GitHub Action (uses: karosia/driftsync@v1)
+└── .goreleaser.yaml    # prebuilt release binaries
 ```
 
 ---
@@ -345,5 +423,10 @@ fields.
 adapter (an in-process convenience for Go). Any project that can emit an OpenAPI
 file works — the code side becomes a file, same as the published side.
 
-**Can it block merges on breaking changes?** Yes. Use the verify-only workflow
-and add it to branch protection; `diff` exits non-zero on breaking drift.
+**Can it block merges on breaking changes?** Yes. Use `drift-check.yml` and add
+it to branch protection; `driftsync check` exits non-zero per `fail_on`
+(`breaking` by default).
+
+**Do I have to use `driftsync.yaml`?** No — `diff` / `patch` / `apply` / `enrich`
+take explicit file paths and ignore the config. `check` / `sync` are the
+config-driven convenience layer on top.

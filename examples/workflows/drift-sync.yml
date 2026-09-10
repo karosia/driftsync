@@ -1,0 +1,56 @@
+# .github/workflows/drift-sync.yml
+#
+# On every push to main, detect drift, fix the published OpenAPI spec to match
+# the code, and open a pull request. Nothing merges automatically — the PR is
+# your approval gate.
+#
+# Docs: https://github.com/karosia/driftsync#automating-with-github-actions
+
+name: API Doc Drift Sync
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  drift-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Set up whatever toolchain your driftsync.yaml `code.command` needs.
+      # Keep the one(s) that apply, delete the rest.
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      # - uses: actions/setup-python@v5
+      #   with: { python-version: "3.12" }
+      # - uses: actions/setup-node@v4
+      #   with: { node-version: "20" }
+      # - uses: actions/setup-java@v4
+      #   with: { distribution: temurin, java-version: "21" }
+
+      # Install any deps your extraction command imports, e.g.:
+      # - run: pip install -r requirements.txt pyyaml
+      # - run: npm ci
+
+      - uses: karosia/driftsync@v1
+        with:
+          mode: sync                 # rewrites the published spec
+          report-file: drift-report.md   # written for the PR body
+        env:
+          # Optional: LLM-written descriptions for brand-new fields.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          branch: drift/sync-openapi
+          title: "docs: sync OpenAPI spec with code"
+          commit-message: "docs: sync OpenAPI spec with code (automated)"
+          body-path: drift-report.md
+          labels: documentation, automated

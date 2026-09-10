@@ -1,6 +1,6 @@
 module github.com/karosia/driftsync
 
-go 1.26.2
+go 1.25.7
 
 require (
 	github.com/danielgtaylor/huma/v2 v2.39.1
