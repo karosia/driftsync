@@ -8,7 +8,7 @@ import (
 
 	"github.com/pb33f/libopenapi"
 
-	"driftsync/ir"
+	"github.com/karosia/driftsync/ir"
 )
 
 // Adapter loads a *published* OpenAPI document from a file on disk and exposes it

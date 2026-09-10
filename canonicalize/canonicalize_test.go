@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"driftsync/canonicalize"
-	"driftsync/ir"
+	"github.com/karosia/driftsync/canonicalize"
+	"github.com/karosia/driftsync/ir"
 )
 
 func canon(t *testing.T, raw string) string {

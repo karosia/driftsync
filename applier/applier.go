@@ -8,7 +8,7 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
-	"driftsync/patch"
+	"github.com/karosia/driftsync/patch"
 )
 
 // Failure records a patch that could not be applied, with why — never silently

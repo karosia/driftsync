@@ -84,6 +84,12 @@ Steps 2–7 are identical for every project. Only step 1 depends on your stack.
 ### 1. Build the CLI
 
 ```bash
+go install github.com/karosia/driftsync/cmd/driftsync@latest
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/karosia/driftsync
 cd driftsync
 go build -o driftsync ./cmd/driftsync   # requires Go 1.22+

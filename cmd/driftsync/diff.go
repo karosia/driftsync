@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"driftsync/diff"
+	"github.com/karosia/driftsync/diff"
 )
 
 func cmdDiff(args []string) error {

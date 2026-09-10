@@ -7,8 +7,8 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
-	"driftsync/diff"
-	"driftsync/ir"
+	"github.com/karosia/driftsync/diff"
+	"github.com/karosia/driftsync/ir"
 )
 
 type Op string

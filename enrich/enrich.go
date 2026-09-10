@@ -5,7 +5,7 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
-	"driftsync/patch"
+	"github.com/karosia/driftsync/patch"
 )
 
 // DescribeRequest is everything a provider needs to write one description.

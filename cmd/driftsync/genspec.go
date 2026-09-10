@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"driftsync/adapters/humaadapter"
-	"driftsync/ir"
-	"driftsync/sampleapi"
+	"github.com/karosia/driftsync/adapters/humaadapter"
+	"github.com/karosia/driftsync/ir"
+	"github.com/karosia/driftsync/sampleapi"
 )
 
 func cmdGenspec(args []string) error {

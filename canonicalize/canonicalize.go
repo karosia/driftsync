@@ -9,7 +9,7 @@ import (
 	v3high "github.com/pb33f/libopenapi/datamodel/high/v3"
 	yaml "gopkg.in/yaml.v3"
 
-	"driftsync/ir"
+	"github.com/karosia/driftsync/ir"
 )
 
 // Apply normalizes a document into canonical 3.1 form, so two documents can be

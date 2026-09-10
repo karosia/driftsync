@@ -1,4 +1,4 @@
-module driftsync
+module github.com/karosia/driftsync
 
 go 1.26.2
 

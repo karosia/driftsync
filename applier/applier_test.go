@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"driftsync/applier"
-	"driftsync/patch"
+	"github.com/karosia/driftsync/applier"
+	"github.com/karosia/driftsync/patch"
 
 	yaml "gopkg.in/yaml.v3"
 )

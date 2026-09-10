@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"driftsync/enrich"
-	"driftsync/patch"
+	"github.com/karosia/driftsync/enrich"
+	"github.com/karosia/driftsync/patch"
 
 	yaml "gopkg.in/yaml.v3"
 )

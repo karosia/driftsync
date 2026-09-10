@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"driftsync/llm"
+	"github.com/karosia/driftsync/llm"
 )
 
 // LLMEnricher adapts any llm.Client into an Enricher. The DOMAIN knowledge —

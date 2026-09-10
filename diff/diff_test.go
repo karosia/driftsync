@@ -3,10 +3,10 @@ package diff_test
 import (
 	"testing"
 
-	"driftsync/adapters/specfile"
-	"driftsync/canonicalize"
-	"driftsync/diff"
-	"driftsync/ir"
+	"github.com/karosia/driftsync/adapters/specfile"
+	"github.com/karosia/driftsync/canonicalize"
+	"github.com/karosia/driftsync/diff"
+	"github.com/karosia/driftsync/ir"
 )
 
 // mustDoc writes yaml to a temp file, loads + canonicalizes it. Test helper.

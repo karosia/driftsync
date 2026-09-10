@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"driftsync/diff"
-	"driftsync/enrich"
-	"driftsync/llm"
-	"driftsync/patch"
+	"github.com/karosia/driftsync/diff"
+	"github.com/karosia/driftsync/enrich"
+	"github.com/karosia/driftsync/llm"
+	"github.com/karosia/driftsync/patch"
 )
 
 func cmdEnrich(args []string) error {

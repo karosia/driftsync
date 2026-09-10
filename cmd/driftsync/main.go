@@ -8,9 +8,9 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
-	"driftsync/adapters/specfile"
-	"driftsync/canonicalize"
-	"driftsync/ir"
+	"github.com/karosia/driftsync/adapters/specfile"
+	"github.com/karosia/driftsync/canonicalize"
+	"github.com/karosia/driftsync/ir"
 )
 
 // command is one subcommand: a name, a one-line help, and a runner.

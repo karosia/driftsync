@@ -8,7 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/pb33f/libopenapi"
 
-	"driftsync/ir"
+	"github.com/karosia/driftsync/ir"
 )
 
 // Adapter extracts the contract from an already-constructed huma.API.

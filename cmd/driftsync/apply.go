@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"driftsync/applier"
-	"driftsync/diff"
-	"driftsync/patch"
+	"github.com/karosia/driftsync/applier"
+	"github.com/karosia/driftsync/diff"
+	"github.com/karosia/driftsync/patch"
 )
 
 func cmdApply(args []string) error {

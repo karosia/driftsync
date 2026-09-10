@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"driftsync/diff"
-	"driftsync/patch"
+	"github.com/karosia/driftsync/diff"
+	"github.com/karosia/driftsync/patch"
 )
 
 func cmdPatch(args []string) error {

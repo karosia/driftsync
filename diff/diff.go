@@ -8,7 +8,7 @@ import (
 	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
 	"github.com/pb33f/libopenapi/orderedmap"
 
-	"driftsync/ir"
+	"github.com/karosia/driftsync/ir"
 )
 
 // ---- direction + severity (the conceptual heart) -----------------------------
