@@ -1,4 +1,4 @@
-name: driftsync
+name: OpenAPI DriftSync
 description: Detect (and optionally fix) OpenAPI documentation drift from a driftsync.yaml config.
 author: karosia
 branding:
