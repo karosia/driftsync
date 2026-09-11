@@ -53,7 +53,9 @@ That's the whole design philosophy. Everything below follows from it.
    the same change is breaking in a response but harmless in a request, and vice
    versa.
 4. **Patch** — turn each drift into a concrete JSON Pointer (RFC 6901) edit,
-   with the correct value copied from the code.
+   with the correct value copied from the code. A rename or removal keeps
+   `required` in sync automatically (the old name never dangles), and a whole
+   new or removed schema is added or dropped, not just its properties.
 5. **Enrich** *(optional)* — an LLM writes one-line descriptions for brand-new
    fields. It touches nothing else.
 6. **Apply** — edit the published file (preserving your hand-written prose and
@@ -386,6 +388,9 @@ identical either way; only which side you patch changes.
   still apply.
 - **The LLM writes descriptions only.** It cannot change which fields are added,
   removed, or retyped.
+- **A `required` entry naming no property is flagged, not fixed.** driftsync
+  reports it (`required_dangling`, info) on whichever side has it — there's no
+  code-side value to auto-correct a name that isn't a real property.
 
 ---
 
