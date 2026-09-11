@@ -2,7 +2,13 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    # Tags with two dots only (v0.2.0) — excludes moving major-version tags
+    # like v1, which action.yml consumers reference via
+    # `uses: karosia/driftsync@v1`. Tag filters are glob (minimatch), not
+    # regex, so this is "*.*.*" rather than a `[0-9]+` character class.
+    # Without it, force-pushing v1 forward on every release re-triggers
+    # GoReleaser and creates a duplicate GitHub Release for the same commit.
+    tags: ["v*.*.*"]
 
 permissions:
   contents: write
