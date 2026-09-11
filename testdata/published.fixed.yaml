@@ -36,7 +36,7 @@ components:
         User:
             type: object
             required:
-                - user_id
+                - userId
                 - email
             properties:
                 email:

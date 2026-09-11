@@ -208,6 +208,17 @@ func replaceAt(parent *yaml.Node, key string, p patch.Patch) error {
 func removeAt(parent *yaml.Node, key string, p patch.Patch) error {
 	switch parent.Kind {
 	case yaml.MappingNode:
+		// A JSON Pointer can't address an array element by value, so a
+		// value-based remove (e.g. one name out of `required`) addresses the
+		// array itself: `key` names the field, and p.Value picks the element
+		// to drop from it — not the whole field.
+		if p.Value != nil {
+			seq := mapGet(parent, key)
+			if seq == nil || seq.Kind != yaml.SequenceNode {
+				return fmt.Errorf("remove target %q not found", key)
+			}
+			return removeByValue(seq, p.Value)
+		}
 		for i := 0; i+1 < len(parent.Content); i += 2 {
 			if parent.Content[i].Value == key {
 				parent.Content = append(parent.Content[:i], parent.Content[i+2:]...)
