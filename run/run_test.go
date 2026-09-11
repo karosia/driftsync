@@ -140,6 +140,62 @@ func TestSync_ProducesFixedSpec(t *testing.T) {
 	}
 }
 
+// TestSync_SchemaAddedAndRemoved covers a whole new/removed component schema
+// (not just a property within one) actually reaching the corrected spec —
+// previously patchesFor had no case for SchemaAdded/SchemaRemoved, so sync
+// silently produced zero patches for either.
+func TestSync_SchemaAddedAndRemoved(t *testing.T) {
+	dir := t.TempDir()
+	pub := filepath.Join(dir, "published.yaml")
+	code := filepath.Join(dir, "code.yaml")
+	if err := os.WriteFile(pub, []byte(`openapi: 3.0.3
+info: {title: T, version: '1.0.0'}
+paths: {}
+components:
+  schemas:
+    Legacy:
+      type: object
+      properties: {id: {type: string}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(code, []byte(`openapi: 3.1.0
+info: {title: T, version: '1.0.0'}
+paths: {}
+components:
+  schemas:
+    Widget:
+      type: object
+      properties: {id: {type: string}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\npublished: " + pub +
+		"\ncode:\n  command: cp " + code + " openapi.gen.yaml\n  file: openapi.gen.yaml\n"
+	cfgPath := filepath.Join(dir, "driftsync.yaml")
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	res, err := run.Sync(context.Background(), run.Options{Config: cfg, Stderr: io_discard{}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if res.Applied != 2 {
+		t.Fatalf("expected 2 applied patches (add Widget, remove Legacy), got %d: %+v", res.Applied, res.Failed)
+	}
+	got := string(res.Corrected)
+	if strings.Contains(got, "Legacy:") {
+		t.Errorf("Legacy should have been removed from the corrected spec:\n%s", got)
+	}
+	if !strings.Contains(got, "Widget:") {
+		t.Errorf("Widget should have been added to the corrected spec:\n%s", got)
+	}
+}
+
 func TestSync_EnricherFillsDescriptions(t *testing.T) {
 	cfg := writeConfig(t, "code.yaml", "")
 	res, err := run.Sync(context.Background(), run.Options{

@@ -63,9 +63,27 @@ func patchesFor(c diff.Change, codeRoot *yaml.Node) []Patch {
 	opBase := func() string { return "/paths/" + esc(t.Path) + "/" + strings.ToLower(t.Method) }
 
 	switch c.Kind {
+	// ---- schemas (whole component) ----
+	case diff.SchemaAdded:
+		return []Patch{{Op: OpAdd, Path: "/components/schemas/" + esc(t.Schema), CreatePath: true,
+			Value:  extract(codeRoot, "components", "schemas", t.Schema),
+			Reason: reason(c), Severity: c.Severity}}
+
+	case diff.SchemaRemoved:
+		return []Patch{{Op: OpRemove, Path: "/components/schemas/" + esc(t.Schema),
+			Reason: reason(c), Severity: c.Severity}}
+
 	// ---- schema properties ----
 	case diff.PropertyRemoved:
-		return []Patch{{Op: OpRemove, Path: propPath(t.Property), Reason: reason(c), Severity: c.Severity}}
+		patches := []Patch{{Op: OpRemove, Path: propPath(t.Property), Reason: reason(c), Severity: c.Severity}}
+		// A removed property that was required would otherwise leave `required`
+		// naming a property that no longer exists (same class of bug as a
+		// rename — see #2 — just without the rename's "to" side).
+		if c.FromRequired {
+			patches = append(patches, Patch{Op: OpRemove, Path: reqPath, Value: scalarNode(t.Property),
+				Reason: reason(c), Severity: c.Severity})
+		}
+		return patches
 
 	case diff.PropertyAdded:
 		return []Patch{{Op: OpAdd, Path: propPath(t.Property),
@@ -142,6 +160,10 @@ func patchesFor(c diff.Change, codeRoot *yaml.Node) []Patch {
 			Match:  map[string]string{"name": t.ParamName, "in": t.ParamIn},
 			Value:  findParamNode(codeRoot, t.Path, strings.ToLower(t.Method), t.ParamName, t.ParamIn),
 			Reason: reason(c), Severity: c.Severity}}
+
+		// diff.RequiredDangling deliberately falls through to nil below: it flags
+		// a `required` entry naming no property in ONE document, which isn't a
+		// drift between published and code with a code-side value to apply.
 	}
 	return nil
 }

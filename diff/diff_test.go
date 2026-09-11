@@ -100,3 +100,105 @@ func TestDiff_NoChange(t *testing.T) {
 		t.Errorf("identical specs should report no drift, got %+v", r.Changes)
 	}
 }
+
+func TestDiff_SchemaAddedAndRemoved(t *testing.T) {
+	published := mustDoc(t, minimalPaths(`
+  /users: {get: {operationId: list, responses: {'200': {description: OK}}}}`)+`
+components:
+  schemas:
+    Legacy:
+      type: object
+      properties: {id: {type: string}}
+`)
+	code := mustDoc(t, minimalPaths(`
+  /users: {get: {operationId: list, responses: {'200': {description: OK}}}}`)+`
+components:
+  schemas:
+    Widget:
+      type: object
+      properties: {id: {type: string}}
+`)
+	r := diff.Diff(published, code)
+	if c := find(r, diff.SchemaRemoved, "Legacy"); c == nil || c.Severity != diff.Info {
+		t.Errorf("expected info schema_removed Legacy, got %+v", c)
+	}
+	if c := find(r, diff.SchemaAdded, "Widget"); c == nil || c.Severity != diff.Info {
+		t.Errorf("expected info schema_added Widget, got %+v", c)
+	}
+}
+
+// TestDiff_PropertyRemoved_CarriesFromRequired is a regression for the removal
+// side of #2: removing a REQUIRED property must carry that fact along (patch
+// needs it to also drop the name from `required`), same as a rename does.
+func TestDiff_PropertyRemoved_CarriesFromRequired(t *testing.T) {
+	// specUserBothDirections doesn't parameterize `required`, so build the spec
+	// directly: published has User.required: [id, email] and email gets removed
+	// while still required.
+	published := mustDoc(t, `openapi: 3.0.3
+info: {title: T, version: '1.0.0'}
+paths:
+  /users:
+    post:
+      operationId: create-user
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/User'}
+      responses:
+        '201': {description: Created}
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id: {type: string}
+        email: {type: string}
+`)
+	code := mustDoc(t, `openapi: 3.0.3
+info: {title: T, version: '1.0.0'}
+paths:
+  /users:
+    post:
+      operationId: create-user
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/User'}
+      responses:
+        '201': {description: Created}
+components:
+  schemas:
+    User:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+`)
+	r := diff.Diff(published, code)
+	c := find(r, diff.PropertyRemoved, "User [request].email")
+	if c == nil {
+		t.Fatalf("expected property_removed User.email, got %+v", r.Changes)
+	}
+	if !c.FromRequired {
+		t.Errorf("expected FromRequired=true for a removed required property, got %+v", c)
+	}
+}
+
+func TestDiff_RequiredDangling(t *testing.T) {
+	// `ghost` is in `required` but has no matching property, on the published
+	// side only — code side is clean.
+	published := mustDoc(t, specUserBothDirections(`
+        id: {type: string}`)+"\n      required: [id, ghost]")
+	code := mustDoc(t, specUserBothDirections(`
+        id: {type: string}`)+"\n      required: [id]")
+
+	r := diff.Diff(published, code)
+	c := find(r, diff.RequiredDangling, "User [request].required[ghost]")
+	if c == nil || c.Severity != diff.Info || c.Note != "published" {
+		t.Errorf("expected an info required_dangling flag for published ghost, got %+v", c)
+	}
+	if find(r, diff.RequiredDangling, "User [request].required[id]") != nil {
+		t.Error("id names a real property and must not be flagged dangling")
+	}
+}

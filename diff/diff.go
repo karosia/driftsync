@@ -103,6 +103,11 @@ const (
 	PropertyRenamed     ChangeKind = "property_renamed"
 	RequiredAdded       ChangeKind = "required_added"
 	RequiredRemoved     ChangeKind = "required_removed"
+	// RequiredDangling flags a `required` entry naming no property in the same
+	// schema — a self-consistency lint on ONE document (not a/b drift), so it's
+	// informational only and patch deliberately has no case for it: there's no
+	// code-side value to pull from for a name that doesn't exist as a property.
+	RequiredDangling ChangeKind = "required_dangling"
 )
 
 // Target is the machine-addressable location of a change, so downstream (patch)
@@ -389,6 +394,7 @@ func diffSchemaBody(name string, dir Direction, a, b *base.Schema, r *Report) {
 		r.Changes = append(r.Changes, Change{
 			Kind: PropertyRemoved, Location: loc + "." + pn,
 			Severity: removedSeverity(dir), Target: tgt(pn),
+			FromRequired: areq[pn],
 		})
 	}
 	for _, pn := range addOnly {
@@ -417,6 +423,40 @@ func diffSchemaBody(name string, dir Direction, a, b *base.Schema, r *Report) {
 			})
 		}
 	}
+
+	// Self-consistency lint: a `required` entry naming no property is a bug in
+	// that document, independent of what the other side looks like.
+	for _, pn := range danglingRequired(a.Required, ap) {
+		r.Changes = append(r.Changes, Change{
+			Kind: RequiredDangling, Location: loc + ".required[" + pn + "]",
+			Severity: Info, Note: "published", Target: tgt(pn),
+		})
+	}
+	for _, pn := range danglingRequired(b.Required, bp) {
+		r.Changes = append(r.Changes, Change{
+			Kind: RequiredDangling, Location: loc + ".required[" + pn + "]",
+			Severity: Info, Note: "code", Target: tgt(pn),
+		})
+	}
+}
+
+// danglingRequired returns the (sorted, de-duplicated) entries of `required`
+// that don't name any property in `props`.
+func danglingRequired(required []string, props map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range required {
+		if _, ok := props[name]; ok {
+			continue
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func collectProps(s *base.Schema) map[string]string {

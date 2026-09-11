@@ -79,3 +79,95 @@ func TestPropertyRenamed_RequiredCombinations(t *testing.T) {
 		})
 	}
 }
+
+// TestPropertyRemoved_CleansRequired is a regression for the removal side of
+// #2: removing a property that was required must also drop it from `required`
+// — same bug class as rename, just without a "to" side.
+func TestPropertyRemoved_CleansRequired(t *testing.T) {
+	cases := []struct {
+		name          string
+		fromReq       bool
+		wantRemoveReq bool
+	}{
+		{"removed optional property", false, false},
+		{"removed required property", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := diff.Change{
+				Kind: diff.PropertyRemoved, FromRequired: tc.fromReq,
+				Target: diff.Target{Schema: "User", Property: "email"},
+			}
+			patches := patchesFor(c, &yaml.Node{})
+
+			var gotRemoveProp, gotRemoveReq bool
+			for _, p := range patches {
+				switch {
+				case p.Op == OpRemove && p.Path == "/components/schemas/User/properties/email":
+					gotRemoveProp = true
+				case p.Op == OpRemove && p.Path == "/components/schemas/User/required" && p.Value.Value == "email":
+					gotRemoveReq = true
+				default:
+					t.Errorf("unexpected patch: %+v", p)
+				}
+			}
+			if !gotRemoveProp {
+				t.Errorf("expected the properties removal, got %+v", patches)
+			}
+			if gotRemoveReq != tc.wantRemoveReq {
+				t.Errorf("remove from required = %v, want %v", gotRemoveReq, tc.wantRemoveReq)
+			}
+		})
+	}
+}
+
+// TestSchemaAddedRemoved covers issue-1: a whole new/removed component schema
+// must actually be patched into/out of the published document, not silently
+// dropped by patchesFor.
+func TestSchemaAddedRemoved(t *testing.T) {
+	var codeRoot yaml.Node
+	if err := yaml.Unmarshal([]byte(
+		"components:\n  schemas:\n    Widget:\n      type: object\n      properties:\n        id: {type: string}\n"),
+		&codeRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("added", func(t *testing.T) {
+		c := diff.Change{Kind: diff.SchemaAdded, Target: diff.Target{Schema: "Widget"}}
+		patches := patchesFor(c, &codeRoot)
+		if len(patches) != 1 {
+			t.Fatalf("expected exactly 1 patch, got %+v", patches)
+		}
+		p := patches[0]
+		if p.Op != OpAdd || p.Path != "/components/schemas/Widget" {
+			t.Errorf("unexpected patch: %+v", p)
+		}
+		if !p.CreatePath {
+			t.Error("expected CreatePath so a fresh components/schemas still resolves")
+		}
+		if p.Value == nil {
+			t.Error("expected the whole schema body copied from the code doc")
+		}
+	})
+
+	t.Run("removed", func(t *testing.T) {
+		c := diff.Change{Kind: diff.SchemaRemoved, Target: diff.Target{Schema: "Legacy"}}
+		patches := patchesFor(c, &codeRoot)
+		if len(patches) != 1 {
+			t.Fatalf("expected exactly 1 patch, got %+v", patches)
+		}
+		p := patches[0]
+		if p.Op != OpRemove || p.Path != "/components/schemas/Legacy" {
+			t.Errorf("unexpected patch: %+v", p)
+		}
+	})
+}
+
+// TestRequiredDangling_NoPatch: it's a self-consistency lint on one document,
+// not a drift to fix, so patchesFor must produce nothing for it.
+func TestRequiredDangling_NoPatch(t *testing.T) {
+	c := diff.Change{Kind: diff.RequiredDangling, Target: diff.Target{Schema: "User", Property: "ghost"}}
+	if patches := patchesFor(c, &yaml.Node{}); patches != nil {
+		t.Errorf("expected no patch for a dangling-required flag, got %+v", patches)
+	}
+}
