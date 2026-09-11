@@ -112,6 +112,32 @@ func TestSync_ProducesFixedSpec(t *testing.T) {
 	if norm(string(res.Corrected)) != norm(string(want)) {
 		t.Errorf("corrected spec != published.fixed.yaml fixture\n--- got ---\n%s", res.Corrected)
 	}
+
+	// Regression for #2: a property rename must converge in one sync pass —
+	// re-checking the corrected spec against the same code fixture must find
+	// no drift at all (in particular, no leftover/missing `required` entry).
+	dir := t.TempDir()
+	correctedPath := filepath.Join(dir, "published.yaml")
+	if err := os.WriteFile(correctedPath, res.Corrected, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\npublished: " + correctedPath +
+		"\ncode:\n  command: cp " + fixture(t, "code.yaml") + " openapi.gen.yaml\n  file: openapi.gen.yaml\n"
+	p := filepath.Join(dir, "driftsync.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := config.Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	recheck, err := run.Check(context.Background(), run.Options{Config: cfg2, Stderr: io_discard{}})
+	if err != nil {
+		t.Fatalf("recheck: %v", err)
+	}
+	if len(recheck.Report.Changes) != 0 {
+		t.Errorf("sync did not converge in one pass, re-check still reports drift: %+v", recheck.Report.Changes)
+	}
 }
 
 func TestSync_EnricherFillsDescriptions(t *testing.T) {

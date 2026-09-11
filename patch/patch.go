@@ -78,11 +78,23 @@ func patchesFor(c diff.Change, codeRoot *yaml.Node) []Patch {
 			Reason: reason(c), Severity: c.Severity}}
 
 	case diff.PropertyRenamed:
-		return []Patch{
+		patches := []Patch{
 			{Op: OpRemove, Path: propPath(c.From), Reason: reason(c), Severity: c.Severity},
 			{Op: OpAdd, Path: propPath(c.To),
 				Value:  extract(codeRoot, "components", "schemas", t.Schema, "properties", c.To),
 				Reason: reason(c), Severity: c.Severity}}
+		// A rename changes the property's name, so required[] (which is
+		// name-keyed) needs its own add/remove — it isn't covered by the
+		// properties edit above. See #2.
+		if c.FromRequired {
+			patches = append(patches, Patch{Op: OpRemove, Path: reqPath, Value: scalarNode(c.From),
+				Reason: reason(c), Severity: c.Severity})
+		}
+		if c.ToRequired {
+			patches = append(patches, Patch{Op: OpAdd, Path: reqPath + "/-", Value: scalarNode(c.To),
+				Reason: reason(c), Severity: c.Severity})
+		}
+		return patches
 
 	case diff.RequiredAdded:
 		return []Patch{{Op: OpAdd, Path: reqPath + "/-", Value: scalarNode(t.Property),

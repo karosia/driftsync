@@ -129,6 +129,11 @@ type Change struct {
 	Severity Severity
 	Note     string
 	Target   Target
+
+	// FromRequired/ToRequired carry required-membership across a rename — the
+	// old/new names differ, so patch can't infer this from properties alone.
+	FromRequired bool
+	ToRequired   bool
 }
 
 type Report struct{ Changes []Change }
@@ -377,6 +382,7 @@ func diffSchemaBody(name string, dir Direction, a, b *base.Schema, r *Report) {
 			Kind: PropertyRenamed, Location: loc + "." + m.from,
 			From: m.from, To: m.to, Severity: renameSeverity(dir, breq[m.to]),
 			Note: m.rule, Target: tgt(m.from),
+			FromRequired: areq[m.from], ToRequired: breq[m.to],
 		})
 	}
 	for _, pn := range remOnly {
