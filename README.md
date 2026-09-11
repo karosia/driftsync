@@ -1,5 +1,7 @@
 # driftsync
 
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-OpenAPI%20DriftSync-blue?logo=github)](https://github.com/marketplace/actions/openapi-driftsync)
+
 **Detect when your published API docs have drifted from your code — then fix
 them, safely, behind a pull request.**
 
