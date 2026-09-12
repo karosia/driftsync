@@ -83,6 +83,10 @@ func arrayRemoveIndex(p patch.Patch) int {
 
 // applyOne resolves p and performs the op.
 func applyOne(root *yaml.Node, p patch.Patch) error {
+	// Not addressed by Path: a $ref can appear anywhere in the document.
+	if p.Op == patch.OpRenameRef {
+		return renameRefs(root, p.RefFrom, p.RefTo)
+	}
 	// Array-element ops identified by field values (parameters by name+in).
 	if p.Match != nil {
 		return applyMatched(root, p)
@@ -159,6 +163,43 @@ func findMatch(arr *yaml.Node, match map[string]string) int {
 		}
 	}
 	return -1
+}
+
+// renameRefs rewrites every `$ref: from` scalar anywhere under root to `to` —
+// in other schemas' properties, array items, parameters, any operation's
+// request/response, wherever it is. A schema rename can't be addressed by one
+// JSON Pointer the way every other patch op is, since nothing in the document
+// records where a schema is referenced from. It's a no-op success (not a
+// failure) when nothing matches: an unreferenced schema being renamed leaves
+// nothing dangling to fix.
+func renameRefs(root *yaml.Node, from, to string) error {
+	if from == "" || to == "" {
+		return fmt.Errorf("rename_ref needs both a from and a to $ref")
+	}
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n == nil {
+			return
+		}
+		if n.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				key, val := n.Content[i], n.Content[i+1]
+				if key.Value == "$ref" && val.Kind == yaml.ScalarNode {
+					if val.Value == from {
+						val.Value = to
+					}
+					continue // a $ref's value is always a scalar; nothing more to walk
+				}
+				walk(val)
+			}
+			return
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(root)
+	return nil
 }
 
 // ---- op implementations ------------------------------------------------------

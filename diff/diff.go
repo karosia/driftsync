@@ -97,6 +97,7 @@ const (
 
 	SchemaAdded         ChangeKind = "schema_added"
 	SchemaRemoved       ChangeKind = "schema_removed"
+	SchemaRenamed       ChangeKind = "schema_renamed"
 	PropertyAdded       ChangeKind = "property_added"
 	PropertyRemoved     ChangeKind = "property_removed"
 	PropertyTypeChanged ChangeKind = "property_type_changed"
@@ -333,12 +334,26 @@ func refName(ref string) string { // "#/components/schemas/User" -> "User"
 func diffDirectionalSchemas(a, b *ir.Document, r *Report) {
 	as, bs := collectSchemas(a), collectSchemas(b)
 
+	// A whole-schema rename (e.g. UserDTO -> User) would otherwise show as an
+	// unrelated remove + add, and patch would only add/remove the schema body
+	// — leaving every existing `$ref: '#/components/schemas/UserDTO'` in the
+	// published doc dangling. Catch the deterministic case (identical
+	// structural signature under a new name) before falling back to that.
+	renames, remOnly, addOnly := matchSchemaRenames(
+		sortedKeysMissing(as, bs), sortedKeysMissing(bs, as), as, bs)
+
+	for _, m := range renames {
+		r.Changes = append(r.Changes, Change{
+			Kind: SchemaRenamed, Location: m.from + " -> " + m.to,
+			From: m.from, To: m.to, Severity: Info, Target: Target{Schema: m.from},
+		})
+	}
 	// Presence is reported as info; real impact is decided at use sites below.
-	for _, name := range sortedKeysMissing(as, bs) {
+	for _, name := range remOnly {
 		r.Changes = append(r.Changes, Change{Kind: SchemaRemoved, Location: name,
 			Severity: Info, Target: Target{Schema: name}})
 	}
-	for _, name := range sortedKeysMissing(bs, as) {
+	for _, name := range addOnly {
 		r.Changes = append(r.Changes, Change{Kind: SchemaAdded, Location: name,
 			Severity: Info, Target: Target{Schema: name}})
 	}
@@ -485,6 +500,75 @@ func propSignature(sp *base.SchemaProxy) string {
 		return "type:" + strings.Join(s.Type, "|")
 	}
 	return "type:?"
+}
+
+// ---- schema-level rename matching ---------------------------------------------
+
+type schemaRenameMatch struct{ from, to string }
+
+// matchSchemaRenames pairs a removed schema with an added one when they share
+// the exact same structural signature (property names+types+required) under a
+// different name. Unlike property renames, name similarity isn't the signal —
+// two unrelated schemas essentially never collide on their full property set,
+// so an exact signature match is treated as deterministic; anything else
+// (including an ambiguous match, or an empty/trivial schema that matches too
+// easily) is left as a plain remove+add, same "fuzzy stays split" rule as
+// property renames.
+func matchSchemaRenames(removed, added []string, as, bs map[string]*base.Schema) (
+	matches []schemaRenameMatch, remOnly, addOnly []string) {
+
+	bySig := map[string][]string{}
+	for _, name := range added {
+		if sig, ok := schemaSignature(bs[name]); ok {
+			bySig[sig] = append(bySig[sig], name)
+		}
+	}
+
+	matchedAdded := map[string]bool{}
+	for _, rname := range removed {
+		sig, ok := schemaSignature(as[rname])
+		cands := bySig[sig]
+		if ok && len(cands) == 1 && !matchedAdded[cands[0]] {
+			matches = append(matches, schemaRenameMatch{from: rname, to: cands[0]})
+			matchedAdded[cands[0]] = true
+			continue
+		}
+		remOnly = append(remOnly, rname)
+	}
+	for _, aname := range added {
+		if !matchedAdded[aname] {
+			addOnly = append(addOnly, aname)
+		}
+	}
+	return matches, remOnly, addOnly
+}
+
+// schemaSignature fingerprints a schema by its property names+types and its
+// required set — order-independent. ok is false for an empty/trivial schema
+// (no properties), which is too generic a shape to match on safely.
+func schemaSignature(s *base.Schema) (sig string, ok bool) {
+	props := collectProps(s)
+	if len(props) == 0 {
+		return "", false
+	}
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	for _, name := range names {
+		b.WriteString(name)
+		b.WriteByte(':')
+		b.WriteString(props[name])
+		b.WriteByte(',')
+	}
+	req := append([]string(nil), s.Required...)
+	sort.Strings(req)
+	b.WriteString("|req:")
+	b.WriteString(strings.Join(req, ","))
+	return b.String(), true
 }
 
 // ---- deterministic rename matching -------------------------------------------

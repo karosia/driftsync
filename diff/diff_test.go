@@ -102,6 +102,8 @@ func TestDiff_NoChange(t *testing.T) {
 }
 
 func TestDiff_SchemaAddedAndRemoved(t *testing.T) {
+	// Different shapes so this stays an unrelated remove+add, not a rename
+	// (see TestDiff_SchemaRenamed for the identical-shape case).
 	published := mustDoc(t, minimalPaths(`
   /users: {get: {operationId: list, responses: {'200': {description: OK}}}}`)+`
 components:
@@ -116,7 +118,7 @@ components:
   schemas:
     Widget:
       type: object
-      properties: {id: {type: string}}
+      properties: {name: {type: string}, count: {type: integer}}
 `)
 	r := diff.Diff(published, code)
 	if c := find(r, diff.SchemaRemoved, "Legacy"); c == nil || c.Severity != diff.Info {
@@ -124,6 +126,45 @@ components:
 	}
 	if c := find(r, diff.SchemaAdded, "Widget"); c == nil || c.Severity != diff.Info {
 		t.Errorf("expected info schema_added Widget, got %+v", c)
+	}
+	if find(r, diff.SchemaRenamed, "") != nil {
+		t.Error("unrelated schemas of different shapes must not be matched as a rename")
+	}
+}
+
+// TestDiff_SchemaRenamed is the schema-level counterpart to the property
+// rename fix in #2/#3: a whole component schema renamed (same shape, new
+// name) must be reported as ONE rename, not an unrelated remove+add, because
+// patch needs to know to rewrite every existing $ref to the old name too.
+func TestDiff_SchemaRenamed(t *testing.T) {
+	published := mustDoc(t, minimalPaths(`
+  /users: {get: {operationId: list, responses: {'200': {description: OK}}}}`)+`
+components:
+  schemas:
+    UserDTO:
+      type: object
+      required: [id]
+      properties: {id: {type: string}, email: {type: string}}
+`)
+	code := mustDoc(t, minimalPaths(`
+  /users: {get: {operationId: list, responses: {'200': {description: OK}}}}`)+`
+components:
+  schemas:
+    User:
+      type: object
+      required: [id]
+      properties: {id: {type: string}, email: {type: string}}
+`)
+	r := diff.Diff(published, code)
+	c := find(r, diff.SchemaRenamed, "UserDTO -> User")
+	if c == nil {
+		t.Fatalf("expected schema_renamed UserDTO -> User, got %+v", r.Changes)
+	}
+	if c.From != "UserDTO" || c.To != "User" {
+		t.Errorf("From/To = %q/%q, want UserDTO/User", c.From, c.To)
+	}
+	if find(r, diff.SchemaRemoved, "UserDTO") != nil || find(r, diff.SchemaAdded, "User") != nil {
+		t.Error("a matched rename must not also appear as a separate remove+add")
 	}
 }
 
