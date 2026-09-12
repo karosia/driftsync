@@ -171,3 +171,46 @@ func TestRequiredDangling_NoPatch(t *testing.T) {
 		t.Errorf("expected no patch for a dangling-required flag, got %+v", patches)
 	}
 }
+
+// TestSchemaRenamed_RewritesBodyAndRefs: a schema-level rename must emit the
+// body swap (remove old, add new) AND a document-wide $ref fixup — the body
+// swap alone would leave every existing reference to the old name dangling.
+func TestSchemaRenamed_RewritesBodyAndRefs(t *testing.T) {
+	var codeRoot yaml.Node
+	if err := yaml.Unmarshal([]byte(
+		"components:\n  schemas:\n    User:\n      properties:\n        id: {type: string}\n"),
+		&codeRoot); err != nil {
+		t.Fatal(err)
+	}
+	c := diff.Change{Kind: diff.SchemaRenamed, From: "UserDTO", To: "User"}
+	patches := patchesFor(c, &codeRoot)
+	if len(patches) != 3 {
+		t.Fatalf("expected 3 patches (remove old body, add new body, rename_ref), got %+v", patches)
+	}
+
+	var gotRemoveOld, gotAddNew, gotRenameRef bool
+	for _, p := range patches {
+		switch {
+		case p.Op == OpRemove && p.Path == "/components/schemas/UserDTO":
+			gotRemoveOld = true
+		case p.Op == OpAdd && p.Path == "/components/schemas/User":
+			if !p.CreatePath {
+				t.Error("expected CreatePath on the new schema body add")
+			}
+			if p.Value == nil {
+				t.Error("expected the new schema body copied from the code doc")
+			}
+			gotAddNew = true
+		case p.Op == OpRenameRef:
+			if p.RefFrom != "#/components/schemas/UserDTO" || p.RefTo != "#/components/schemas/User" {
+				t.Errorf("unexpected rename_ref from/to: %q -> %q", p.RefFrom, p.RefTo)
+			}
+			gotRenameRef = true
+		default:
+			t.Errorf("unexpected patch: %+v", p)
+		}
+	}
+	if !gotRemoveOld || !gotAddNew || !gotRenameRef {
+		t.Errorf("missing one of the three expected patches: %+v", patches)
+	}
+}

@@ -166,7 +166,7 @@ components:
   schemas:
     Widget:
       type: object
-      properties: {id: {type: string}}
+      properties: {name: {type: string}, count: {type: integer}}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -193,6 +193,107 @@ components:
 	}
 	if !strings.Contains(got, "Widget:") {
 		t.Errorf("Widget should have been added to the corrected spec:\n%s", got)
+	}
+}
+
+// TestSync_SchemaRenamed_FixesDanglingRef is the schema-level counterpart to
+// the property-rename fix in #2/#3: renaming a whole component schema
+// (UserDTO -> User, same shape) must also rewrite the existing $ref that
+// points to it — otherwise the corrected spec has a dangling reference to a
+// schema that no longer exists.
+func TestSync_SchemaRenamed_FixesDanglingRef(t *testing.T) {
+	dir := t.TempDir()
+	pub := filepath.Join(dir, "published.yaml")
+	code := filepath.Join(dir, "code.yaml")
+	if err := os.WriteFile(pub, []byte(`openapi: 3.0.3
+info: {title: T, version: '1.0.0'}
+paths:
+  /users/{id}:
+    get:
+      operationId: get-user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UserDTO'}
+components:
+  schemas:
+    UserDTO:
+      type: object
+      required: [id]
+      properties: {id: {type: string}, email: {type: string}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(code, []byte(`openapi: 3.1.0
+info: {title: T, version: '1.0.0'}
+paths:
+  /users/{id}:
+    get:
+      operationId: get-user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+components:
+  schemas:
+    User:
+      type: object
+      required: [id]
+      properties: {id: {type: string}, email: {type: string}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\npublished: " + pub +
+		"\ncode:\n  command: cp " + code + " openapi.gen.yaml\n  file: openapi.gen.yaml\n"
+	cfgPath := filepath.Join(dir, "driftsync.yaml")
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	res, err := run.Sync(context.Background(), run.Options{Config: cfg, Stderr: io_discard{}})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("expected no failed patches, got %+v", res.Failed)
+	}
+	got := string(res.Corrected)
+	if strings.Contains(got, "UserDTO") {
+		t.Errorf("no trace of the old schema name should remain (dangling $ref or leftover schema):\n%s", got)
+	}
+	if !strings.Contains(got, "#/components/schemas/User") {
+		t.Errorf("the response $ref should now point at the renamed schema:\n%s", got)
+	}
+
+	// Convergence: re-checking the corrected spec against the code fixture
+	// must find no drift at all.
+	correctedPath := filepath.Join(dir, "published.corrected.yaml")
+	if err := os.WriteFile(correctedPath, res.Corrected, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body2 := "version: 1\npublished: " + correctedPath +
+		"\ncode:\n  command: cp " + code + " openapi.gen.yaml\n  file: openapi.gen.yaml\n"
+	cfgPath2 := filepath.Join(dir, "driftsync2.yaml")
+	if err := os.WriteFile(cfgPath2, []byte(body2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := config.Load(cfgPath2)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	recheck, err := run.Check(context.Background(), run.Options{Config: cfg2, Stderr: io_discard{}})
+	if err != nil {
+		t.Fatalf("recheck: %v", err)
+	}
+	if len(recheck.Report.Changes) != 0 {
+		t.Errorf("sync did not converge in one pass, re-check still reports drift: %+v", recheck.Report.Changes)
 	}
 }
 

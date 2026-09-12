@@ -54,8 +54,11 @@ That's the whole design philosophy. Everything below follows from it.
    versa.
 4. **Patch** — turn each drift into a concrete JSON Pointer (RFC 6901) edit,
    with the correct value copied from the code. A rename or removal keeps
-   `required` in sync automatically (the old name never dangles), and a whole
-   new or removed schema is added or dropped, not just its properties.
+   `required` in sync automatically (the old name never dangles), a whole new
+   or removed schema is added or dropped (not just its properties), and
+   renaming a schema itself rewrites every existing `$ref` to it — not only
+   the schema body — so nothing is left pointing at a name that no longer
+   exists.
 5. **Enrich** *(optional)* — an LLM writes one-line descriptions for brand-new
    fields. It touches nothing else.
 6. **Apply** — edit the published file (preserving your hand-written prose and

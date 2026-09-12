@@ -17,6 +17,12 @@ const (
 	OpAdd     Op = "add"
 	OpRemove  Op = "remove"
 	OpReplace Op = "replace"
+	// OpRenameRef rewrites every `$ref: RefFrom` anywhere in the document to
+	// RefTo. Unlike the other ops, it isn't addressed by Path — a $ref to a
+	// renamed schema can appear anywhere (other schemas' properties, array
+	// items, any operation's request/response), so the applier walks the
+	// whole tree instead of resolving one JSON Pointer.
+	OpRenameRef Op = "rename_ref"
 )
 
 // Patch is a single, reviewable INTENT to change the published document.
@@ -28,6 +34,8 @@ type Patch struct {
 	Path        string            // JSON Pointer (RFC 6901) into the published document
 	Value       *yaml.Node        // fragment to add/replace, copied from the code doc; nil for remove
 	Match       map[string]string // identify an array element (parameters: name+in)
+	RefFrom     string            // OpRenameRef only: the $ref value to find
+	RefTo       string            // OpRenameRef only: its replacement
 	CreatePath  bool              // for add: create missing map ancestors (new operations)
 	Description string            // prose slot, filled by the later LLM stage
 	Reason      string            // provenance: which drift this resolves (for review)
@@ -72,6 +80,19 @@ func patchesFor(c diff.Change, codeRoot *yaml.Node) []Patch {
 	case diff.SchemaRemoved:
 		return []Patch{{Op: OpRemove, Path: "/components/schemas/" + esc(t.Schema),
 			Reason: reason(c), Severity: c.Severity}}
+
+	case diff.SchemaRenamed:
+		// The schema body edit alone would leave every existing
+		// `$ref: '#/components/schemas/<From>'` dangling — rewrite them too.
+		return []Patch{
+			{Op: OpRemove, Path: "/components/schemas/" + esc(c.From), Reason: reason(c), Severity: c.Severity},
+			{Op: OpAdd, Path: "/components/schemas/" + esc(c.To), CreatePath: true,
+				Value:  extract(codeRoot, "components", "schemas", c.To),
+				Reason: reason(c), Severity: c.Severity},
+			{Op: OpRenameRef,
+				RefFrom: "#/components/schemas/" + c.From, RefTo: "#/components/schemas/" + c.To,
+				Reason: reason(c), Severity: c.Severity},
+		}
 
 	// ---- schema properties ----
 	case diff.PropertyRemoved:
@@ -178,7 +199,7 @@ func dedup(in []Patch) []Patch {
 	seen := map[string]int{} // key -> index in out
 	var out []Patch
 	for _, p := range in {
-		key := string(p.Op) + " " + p.Path + " " + valueKey(p) + " " + matchKey(p)
+		key := string(p.Op) + " " + p.Path + " " + valueKey(p) + " " + matchKey(p) + " " + p.RefFrom + ">" + p.RefTo
 		if idx, ok := seen[key]; ok {
 			if p.Severity > out[idx].Severity {
 				out[idx].Severity = p.Severity
