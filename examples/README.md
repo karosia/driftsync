@@ -22,14 +22,22 @@ See the [Configuration](../README.md#configuration) section for every key.
 
 ## `workflows/`
 
-Two stack-agnostic GitHub Actions workflows built on the composite action
-(`uses: karosia/driftsync@v1`):
+GitHub Actions workflows built on the composite action
+(`uses: karosia/driftsync@v1`) — driftsync itself installs as a prebuilt
+binary regardless of your project's language; only the toolchain step that
+runs your `code.command` needs to match your stack.
 
 | File | What it does |
 |------|--------------|
-| `drift-check.yml` | fails CI when the docs have drifted (gate merges) |
-| `drift-sync.yml`  | rewrites the published spec and opens a PR |
+| `drift-check.yml` | fails CI when the docs have drifted (gate merges) — stack-agnostic, with the common toolchain steps (`setup-go` / `setup-python` / `setup-node` / `setup-java`) commented in; keep the one you need |
+| `drift-sync.yml`  | rewrites the published spec and opens a PR — same toolchain-step convention |
+| `drift-check-fastapi.yml` | check, pre-wired for Python + FastAPI |
+| `drift-check-nestjs.yml`  | check, pre-wired for Node + NestJS |
+| `drift-check-spring.yml`  | check, pre-wired for Java + Spring (springdoc) |
+| `drift-check-swaggo.yml`  | check, pre-wired for Go + gin + swaggo (needs both Go and Node) |
 
-Both need a toolchain-setup step for whatever your `code.command` runs — the
-files have the common ones (`setup-go` / `setup-python` / `setup-node` /
-`setup-java`) commented in; keep the one you need.
+The stack-specific files only differ from `drift-check.yml` in that one
+toolchain step — for `sync` on one of those stacks, copy its toolchain step
+into `drift-sync.yml`. (There's no `-huma` or `-generic` variant: the plain
+`drift-check.yml` already works for huma as-is, and "generic" has no fixed
+toolchain to pre-wire.)

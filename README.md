@@ -294,7 +294,10 @@ The composite action installs driftsync and runs `check` or `sync` against your
 Copy [`examples/workflows/drift-check.yml`](examples/workflows/drift-check.yml)
 and [`drift-sync.yml`](examples/workflows/drift-sync.yml) (or run
 `driftsync init --stack <x> --with-workflows`). Many teams use both: **check**
-on PRs, **sync** on `main`.
+on PRs, **sync** on `main`. Stack-specific `check` variants (toolchain step
+pre-wired, nothing to uncomment) are in
+[`examples/workflows/`](examples/workflows/) too — driftsync's own install is
+the same prebuilt binary either way; only that one step changes per stack.
 
 ### Mode A — Sync + PR
 

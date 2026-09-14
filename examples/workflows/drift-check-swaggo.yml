@@ -1,0 +1,31 @@
+# .github/workflows/drift-check.yml — Go + gin + swaggo annotations
+#
+# Fails CI when the published OpenAPI spec has drifted from your swaggo
+# annotations (converted 2.0 -> 3.x), per your driftsync.yaml (see
+# examples/config/swaggo.driftsync.yaml). Needs BOTH Go and Node — swag
+# generates from your annotations, swagger2openapi does the version
+# conversion. Add this job to branch protection to block merges on breaking
+# drift.
+#
+# Docs: https://github.com/karosia/driftsync#automating-with-github-actions
+
+name: API Doc Drift Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request: {}
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - uses: karosia/driftsync@v1
+        with:
+          mode: check          # exit non-zero on drift (per fail_on in driftsync.yaml)
