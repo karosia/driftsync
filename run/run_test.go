@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -313,6 +314,47 @@ func TestSync_EnricherFillsDescriptions(t *testing.T) {
 	}
 	if described == 0 {
 		t.Error("expected the stub enricher to describe at least one added field")
+	}
+}
+
+// TestSync_RenameHints_AppearInTextReport: testdata's fixture has `legacy`
+// removed and `createdAt` added, same schema+direction+type (both strings) —
+// an unambiguous candidate the stub enricher always confirms. The hint must
+// show up both on Result.RenameHints and folded into the text report (so it
+// reaches a PR body via report_file), but never imply the patches changed.
+func TestSync_RenameHints_AppearInTextReport(t *testing.T) {
+	cfg := writeConfig(t, "code.yaml", "")
+	res, err := run.Sync(context.Background(), run.Options{
+		Config: cfg, Enricher: enrich.StubEnricher{}, Stderr: io_discard{},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(res.RenameHints) == 0 {
+		t.Fatal("expected at least one rename hint from the stub enricher")
+	}
+	if !strings.Contains(res.RenderedReport, "Possible renames") {
+		t.Errorf("expected the hints section in the rendered report:\n%s", res.RenderedReport)
+	}
+}
+
+// TestSync_RenameHints_OmittedFromJSONReport: appending prose to a json report
+// would break it for machine readers, so hints must be dropped from
+// RenderedReport (Result.RenameHints is still populated programmatically).
+func TestSync_RenameHints_OmittedFromJSONReport(t *testing.T) {
+	cfg := writeConfig(t, "code.yaml", "report: json\n")
+	res, err := run.Sync(context.Background(), run.Options{
+		Config: cfg, Enricher: enrich.StubEnricher{}, Stderr: io_discard{},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(res.RenameHints) == 0 {
+		t.Fatal("expected Result.RenameHints to still be populated")
+	}
+	var js map[string]any
+	if err := json.Unmarshal([]byte(res.RenderedReport), &js); err != nil {
+		t.Errorf("json report must stay valid JSON, got parse error %v:\n%s", err, res.RenderedReport)
 	}
 }
 

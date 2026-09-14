@@ -17,11 +17,27 @@ type DescribeRequest struct {
 	Snippet string // the added fragment (YAML) for type context
 }
 
+// RenameCandidate is a PropertyRemoved and a PropertyAdded change in the same
+// schema+direction that share a type but weren't matched by diff's
+// deterministic name-based rename detection (see matchRenames) — the
+// "semantic rename" gap called out in the README (qty -> quantity).
+type RenameCandidate struct {
+	Schema, Direction string
+	FromName, ToName  string
+	TypeSig           string
+}
+
 // Enricher writes a one-line, human-readable description for a new field or
-// endpoint. One implementation per LLM provider (Anthropic, OpenAI, Gemini...).
-// A returned error is non-fatal to the pipeline — the caller degrades.
+// endpoint, and can be asked to judge a RenameCandidate. One implementation per
+// LLM provider (Anthropic, OpenAI, Gemini...). A returned error is non-fatal to
+// the pipeline — the caller degrades.
 type Enricher interface {
 	Describe(ctx context.Context, req DescribeRequest) (string, error)
+	// SuggestRename judges whether req is the same field renamed. It is
+	// ADVISORY ONLY: the answer never changes what patch gets applied (still
+	// a plain remove+add) — it only surfaces a note for the human reviewer.
+	// ok=false (with any error) means "no hint", not "confirmed not a rename".
+	SuggestRename(ctx context.Context, req RenameCandidate) (ok bool, note string, err error)
 	Name() string // provider label, for logging/audit
 }
 

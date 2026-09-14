@@ -140,6 +140,14 @@ type Change struct {
 	// old/new names differ, so patch can't infer this from properties alone.
 	FromRequired bool
 	ToRequired   bool
+
+	// TypeSig is the property's type signature (see propSignature), set on
+	// PropertyRemoved/PropertyAdded only. It's not used for detection —
+	// matchRenames already decided these aren't the same field — but lets a
+	// later, optional LLM pass (enrich.SuggestRenames) find semantically
+	// plausible rename candidates (e.g. qty -> quantity) that the
+	// deterministic matcher can't, without diff itself getting fuzzy.
+	TypeSig string
 }
 
 type Report struct{ Changes []Change }
@@ -409,13 +417,13 @@ func diffSchemaBody(name string, dir Direction, a, b *base.Schema, r *Report) {
 		r.Changes = append(r.Changes, Change{
 			Kind: PropertyRemoved, Location: loc + "." + pn,
 			Severity: removedSeverity(dir), Target: tgt(pn),
-			FromRequired: areq[pn],
+			FromRequired: areq[pn], TypeSig: ap[pn],
 		})
 	}
 	for _, pn := range addOnly {
 		r.Changes = append(r.Changes, Change{
 			Kind: PropertyAdded, Location: loc + "." + pn,
-			Severity: addedSeverity(dir, breq[pn]), Target: tgt(pn),
+			Severity: addedSeverity(dir, breq[pn]), Target: tgt(pn), TypeSig: bp[pn],
 		})
 	}
 	for _, pn := range sortedKeysCommon(ap, bp) {
