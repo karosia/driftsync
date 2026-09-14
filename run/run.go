@@ -29,7 +29,7 @@ import (
 type Options struct {
 	Config *config.Config
 	// Enricher fills descriptions for brand-new fields in sync mode. Nil skips
-	// the step entirely (descriptions stay blank). Ignored by Check.
+	// the step entirely (descriptions stay blank). Ignored by Check and Doctor.
 	Enricher enrich.Enricher
 	// Stderr receives the extraction command's stdout+stderr chatter, so the
 	// rendered report on the real stdout stays clean. Defaults to os.Stderr.

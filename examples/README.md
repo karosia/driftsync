@@ -6,7 +6,8 @@ writes the same files into your repo.
 ## `config/`
 
 One `driftsync.yaml` per stack. Drop it at your repo root, edit the
-`published:` path and the `code.command`, then run `driftsync check`.
+`published:` path and the `code.command`, then run `driftsync doctor` to
+verify the setup and `driftsync check` to see any drift.
 
 | File | Stack |
 |------|-------|

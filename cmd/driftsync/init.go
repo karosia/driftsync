@@ -58,7 +58,7 @@ func cmdInit(args []string) error {
 			return fmt.Errorf("internal: generic template's command placeholder not found")
 		}
 		cfgBytes = next
-		fmt.Printf("drafted code.command: %s\n  (review this before running `driftsync check` — it was not verified to actually work)\n", cmdStr)
+		fmt.Printf("drafted code.command: %s\n  (review this, then run `driftsync doctor` to verify it actually works — it was not verified for you)\n", cmdStr)
 	}
 
 	if err := writeNew(config.DefaultPath, cfgBytes, *force); err != nil {
@@ -92,8 +92,8 @@ func cmdInit(args []string) error {
 		}
 	}
 
-	fmt.Printf("\nNext: edit %s (the code.command / published path), then run `driftsync check`.\n",
-		config.DefaultPath)
+	fmt.Printf("\nNext: edit %s (the code.command / published path), then run `driftsync doctor` "+
+		"to verify the setup, then `driftsync check`.\n", config.DefaultPath)
 	return nil
 }
 
