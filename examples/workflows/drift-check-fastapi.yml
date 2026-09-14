@@ -1,0 +1,28 @@
+# .github/workflows/drift-check.yml — Python + FastAPI
+#
+# Fails CI when the published OpenAPI spec has drifted from what
+# app.openapi() produces, per your driftsync.yaml (see
+# examples/config/fastapi.driftsync.yaml). Add this job to branch
+# protection to block merges on breaking drift.
+#
+# Docs: https://github.com/karosia/driftsync#automating-with-github-actions
+
+name: API Doc Drift Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request: {}
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyyaml
+
+      - uses: karosia/driftsync@v1
+        with:
+          mode: check          # exit non-zero on drift (per fail_on in driftsync.yaml)

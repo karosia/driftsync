@@ -1,0 +1,29 @@
+# .github/workflows/drift-check.yml — Node + NestJS (@nestjs/swagger)
+#
+# Fails CI when the published OpenAPI spec has drifted from what
+# @nestjs/swagger produces, per your driftsync.yaml (see
+# examples/config/nestjs.driftsync.yaml — needs a small genspec.ts script,
+# see that file for a starter). Add this job to branch protection to block
+# merges on breaking drift.
+#
+# Docs: https://github.com/karosia/driftsync#automating-with-github-actions
+
+name: API Doc Drift Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request: {}
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci
+
+      - uses: karosia/driftsync@v1
+        with:
+          mode: check          # exit non-zero on drift (per fail_on in driftsync.yaml)
