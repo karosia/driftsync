@@ -363,6 +363,21 @@ Add repo secrets `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` to have new fields
 described by an LLM. Set `ANTHROPIC_MODEL` / `OPENAI_MODEL` to your current model
 ids. With no keys, the pipeline still runs; descriptions are just blank.
 
+With a key set, `sync` also asks the LLM about **semantic renames** — a
+remove+add pair the deterministic matcher couldn't pair by name (`qty` ->
+`quantity`; see [Limits & gotchas](#limits--gotchas)) but that share a schema
+and type. Confirmed guesses show up as a "Possible renames" section in the
+report/PR body — advisory only, the patches themselves are still the same
+plain removal + addition either way.
+
+### Optional: LLM-drafted `code.command`
+
+`driftsync init --stack generic --describe "a Go service; run 'go run
+./tools/genspec'"` has an LLM draft the `code.command` line from a prose
+description, instead of leaving the `make openapi` placeholder for you to
+edit by hand. Needs the same API keys as above. Review the drafted command
+before trusting it — it's written, not verified to actually run.
+
 ---
 
 ## Code-first vs design-first
@@ -383,7 +398,9 @@ identical either way; only which side you patch changes.
   nested request/response schemas are still detected, but classified coarsely.
 - **Renames** are matched deterministically for case/separator changes
   (`user_id` ↔ `userId`) and near-misses. Semantic renames (`qty` → `quantity`)
-  still appear as remove + add.
+  still *patch* as remove + add — with an LLM key set, `sync` will flag an
+  unambiguous one as a possible rename in the report, but that's a note for
+  the reviewer, not a different patch.
 - **`apply` preserves structure, not exact formatting.** YAML re-marshalling may
   normalize some styling; the PR diff is small but not always minimal.
 - **Failed patches are reported, never silent.** If you hand-edited a spot a

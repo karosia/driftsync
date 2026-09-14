@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/karosia/driftsync/llm"
 )
@@ -29,4 +30,29 @@ func (l *LLMEnricher) Describe(ctx context.Context, req DescribeRequest) (string
 				"Its OpenAPI fragment is:\n%s",
 			req.Kind, req.Name, req.Schema, req.Snippet),
 	})
+}
+
+func (l *LLMEnricher) SuggestRename(ctx context.Context, req RenameCandidate) (bool, string, error) {
+	out, err := l.Client.Complete(ctx, llm.Request{
+		MaxTokens: 60,
+		System: "You judge whether a removed OpenAPI field and an added OpenAPI field " +
+			"in the same schema are actually the same field renamed, not two unrelated " +
+			"fields. Reply with exactly two lines: the first is YES or NO, the second is " +
+			"one short reason.",
+		Prompt: fmt.Sprintf(
+			"Schema %q, %s: field %q (%s) was removed and field %q (%s) was added. "+
+				"Is %q likely %q renamed?",
+			req.Schema, req.Direction, req.FromName, req.TypeSig, req.ToName, req.TypeSig,
+			req.ToName, req.FromName),
+	})
+	if err != nil {
+		return false, "", err
+	}
+	lines := strings.SplitN(strings.TrimSpace(out), "\n", 2)
+	ok := len(lines) > 0 && strings.EqualFold(strings.TrimSpace(lines[0]), "YES")
+	note := ""
+	if len(lines) > 1 {
+		note = strings.TrimSpace(lines[1])
+	}
+	return ok, note, nil
 }

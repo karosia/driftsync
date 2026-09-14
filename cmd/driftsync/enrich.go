@@ -48,6 +48,19 @@ func cmdEnrich(args []string) error {
 // buildEnricher assembles providers by available keys. Multiple keys -> a
 // fallback chain (Anthropic first, OpenAI next). No keys -> the offline stub.
 func buildEnricher() enrich.Enricher {
+	c, ok := buildLLMClient()
+	if !ok {
+		return enrich.StubEnricher{}
+	}
+	return enrich.NewLLMEnricher(c)
+}
+
+// buildLLMClient is the same provider selection as buildEnricher, for
+// features that need a bare completion rather than a diff-description
+// Enricher (e.g. init --describe). ok is false with no keys configured —
+// unlike buildEnricher, there's no stub fallback: a feature that needs a real
+// answer from a model has nothing useful to fall back to.
+func buildLLMClient() (llm.Client, bool) {
 	var clients []llm.Client
 	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
 		clients = append(clients, llm.NewAnthropic(k, envOr("ANTHROPIC_MODEL", "claude-sonnet-4-5")))
@@ -57,11 +70,11 @@ func buildEnricher() enrich.Enricher {
 	}
 	switch len(clients) {
 	case 0:
-		return enrich.StubEnricher{}
+		return nil, false
 	case 1:
-		return enrich.NewLLMEnricher(clients[0])
+		return clients[0], true
 	default:
-		return enrich.NewLLMEnricher(llm.NewFallback(clients...))
+		return llm.NewFallback(clients...), true
 	}
 }
 

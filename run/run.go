@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/karosia/driftsync/adapters/specfile"
 	"github.com/karosia/driftsync/applier"
@@ -42,6 +43,11 @@ type Result struct {
 	Applied        int
 	Failed         []applier.Failure
 	Corrected      []byte // sync only: the rewritten published spec
+	// RenameHints are LLM-suggested (advisory only) semantic renames the
+	// deterministic matcher didn't catch. Sync only, and only when Enricher is
+	// set. Already folded into RenderedReport for text/md; kept here too for
+	// programmatic access. See enrich.SuggestRenames.
+	RenameHints []enrich.RenameHint
 	// ExitCode is the process exit code check should use, per Config.FailOn.
 	// Always 0 for Sync (the PR is the gate).
 	ExitCode int
@@ -71,6 +77,15 @@ func Sync(ctx context.Context, o Options) (*Result, error) {
 
 	if o.Enricher != nil && len(patches) > 0 {
 		enrich.Apply(ctx, o.Enricher, patches)
+	}
+	if o.Enricher != nil {
+		hints := enrich.SuggestRenames(ctx, o.Enricher, res.Report)
+		res.RenameHints = hints
+		// A hints section is prose glued onto the rendered report — safe for
+		// text/md, but would corrupt a machine-readable json report.
+		if len(hints) > 0 && o.Config.Report != config.FormatJSON {
+			res.RenderedReport += renderHints(hints)
+		}
 	}
 	res.Patches = patches
 
@@ -165,6 +180,21 @@ func render(r *diff.Report, f config.Format) (string, error) {
 	default:
 		return r.Text(), nil
 	}
+}
+
+// renderHints appends a plain-text/markdown section listing LLM-suggested
+// renames the deterministic matcher didn't catch. Advisory only: it never
+// implies the patches above changed — they're still a separate remove+add.
+func renderHints(hints []enrich.RenameHint) string {
+	var b strings.Builder
+	b.WriteString("\n\n## Possible renames (unconfirmed — please verify)\n\n")
+	b.WriteString("driftsync's deterministic matcher didn't pair these (different names), " +
+		"but an LLM flagged them as plausibly the same field renamed. The patches above " +
+		"still apply them as a separate removal and addition — nothing here changed that.\n\n")
+	for _, h := range hints {
+		fmt.Fprintf(&b, "- **%s** [%s]: `%s` -> `%s` — %s\n", h.Schema, h.Direction, h.From, h.To, h.Note)
+	}
+	return b.String()
 }
 
 func exitCode(r *diff.Report, f config.FailOn) int {
