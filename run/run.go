@@ -1,8 +1,9 @@
-// Package run is the orchestration layer behind `driftsync check` and
-// `driftsync sync`: it reads a validated config, extracts the code-side spec,
-// canonicalizes both sides, diffs them, and (for sync) proposes, enriches, and
-// applies the fix. The low-level packages (diff, patch, applier, enrich) stay
-// unaware of the config file.
+// Package run is the orchestration layer behind `driftsync check`, `driftsync
+// sync`, and `driftsync doctor`: it reads a validated config, extracts the
+// code-side spec, canonicalizes both sides, diffs them, and (for sync)
+// proposes, enriches, and applies the fix. Doctor runs the same
+// extract-and-parse steps as a setup check, without diffing. The low-level
+// packages (diff, patch, applier, enrich) stay unaware of the config file.
 package run
 
 import (
@@ -101,6 +102,94 @@ func Sync(ctx context.Context, o Options) (*Result, error) {
 	res.Applied = len(applied)
 	res.Failed = failed
 	return res, nil
+}
+
+// DoctorStep is one checklist item from Doctor.
+type DoctorStep struct {
+	Name string
+	OK   bool
+	// Detail is a human-readable outcome on success, or the error on failure.
+	Detail string
+}
+
+// DoctorResult is the outcome of a Doctor run: an ordered checklist, stopping
+// at the first failure since every later stage depends on the one before it.
+type DoctorResult struct {
+	Steps []DoctorStep
+	OK    bool
+}
+
+// Doctor validates a driftsync SETUP end to end — that code.command runs and
+// produces a file, and that both the code and published specs actually parse
+// as OpenAPI — without diffing them against each other. It's for onboarding
+// ("is my driftsync.yaml wired up right"), not for finding drift; use Check
+// for that. o.Config is assumed already loaded (config.Load succeeded) —
+// that's the caller's own checklist line, not this function's.
+func Doctor(ctx context.Context, o Options) *DoctorResult {
+	res := &DoctorResult{OK: true}
+	cfg := o.Config
+	stderr := o.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+
+	ok := func(name, detail string) {
+		res.Steps = append(res.Steps, DoctorStep{Name: name, OK: true, Detail: detail})
+	}
+	fail := func(name string, err error) {
+		res.Steps = append(res.Steps, DoctorStep{Name: name, OK: false, Detail: err.Error()})
+		res.OK = false
+	}
+
+	if err := extract(ctx, cfg, stderr); err != nil {
+		fail("code.command", err)
+		return res
+	}
+	if cfg.Code.Command != "" {
+		ok("code.command", "ran: "+cfg.Code.Command)
+	} else {
+		ok("code.command", "skipped (no command configured; "+cfg.Code.File+" used as-is)")
+	}
+
+	codeDoc, err := loadCanonical(cfg.Code.File)
+	if err != nil {
+		fail("code spec ("+cfg.Code.File+") parses as OpenAPI", err)
+		return res
+	}
+	ok("code spec ("+cfg.Code.File+") parses as OpenAPI", specSummary(codeDoc))
+
+	pubDoc, err := loadCanonical(cfg.Published)
+	if err != nil {
+		fail("published spec ("+cfg.Published+") parses as OpenAPI", err)
+		return res
+	}
+	ok("published spec ("+cfg.Published+") parses as OpenAPI", specSummary(pubDoc))
+
+	return res
+}
+
+// specSummary is a quick sanity-check count for a Doctor step's detail line —
+// not exhaustive, just enough to show the file wasn't parsed as something
+// trivially empty.
+func specSummary(doc *ir.Document) string {
+	if doc == nil || doc.Model == nil {
+		return "parsed"
+	}
+	ops := 0
+	if doc.Model.Paths != nil {
+		for p := doc.Model.Paths.PathItems.First(); p != nil; p = p.Next() {
+			for op := p.Value().GetOperations().First(); op != nil; op = op.Next() {
+				ops++
+			}
+		}
+	}
+	schemas := 0
+	if doc.Model.Components != nil && doc.Model.Components.Schemas != nil {
+		for pair := doc.Model.Components.Schemas.First(); pair != nil; pair = pair.Next() {
+			schemas++
+		}
+	}
+	return fmt.Sprintf("%d operation(s), %d schema(s)", ops, schemas)
 }
 
 // diffOnly is the shared front half: extract -> load both -> diff -> render.

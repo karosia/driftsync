@@ -130,6 +130,9 @@ Full key reference: **[Configuration](#configuration)**.
 ### 3. Run it
 
 ```bash
+driftsync doctor   # sanity-check the setup itself — does code.command run,
+                   # do both specs parse as OpenAPI? (no diffing yet)
+
 driftsync check    # extract per driftsync.yaml, diff, print a report,
                    # exit non-zero on breaking drift  (for CI)
 
@@ -137,8 +140,9 @@ driftsync sync     # same, then rewrite docs/openapi.yaml to match the code
                    # and write drift-report.md  (review the change, commit via PR)
 ```
 
-`check` is the gate; `sync` is the fix. Both read `driftsync.yaml` — you never
-pass file paths by hand.
+`doctor` is for onboarding — "is this wired up right" — before you ever get
+to "what changed." `check` is the gate; `sync` is the fix. All three read
+`driftsync.yaml` — you never pass file paths by hand.
 
 ### 4. Automate it
 
@@ -352,6 +356,10 @@ jobs:
         with: { mode: check }
 ```
 
+Either mode also writes the report to the run's **Job Summary** tab (in
+addition to the normal console output and `report-file`), so the outcome is
+visible without opening logs.
+
 ### Is the extraction automatic?
 
 Yes. `code.command` in `driftsync.yaml` is defined once; `check` / `sync` run it
@@ -455,5 +463,5 @@ it to branch protection; `driftsync check` exits non-zero per `fail_on`
 (`breaking` by default).
 
 **Do I have to use `driftsync.yaml`?** No — `diff` / `patch` / `apply` / `enrich`
-take explicit file paths and ignore the config. `check` / `sync` are the
-config-driven convenience layer on top.
+take explicit file paths and ignore the config. `check` / `sync` / `doctor` are
+the config-driven convenience layer on top.
