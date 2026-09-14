@@ -26,6 +26,7 @@ var version = "dev"
 func commands() []command {
 	return []command{
 		{"init", "scaffold a driftsync.yaml (and optional workflows)", cmdInit},
+		{"doctor", "config-driven: validate the setup (extraction + both specs parse) without diffing", cmdDoctor},
 		{"check", "config-driven: extract per driftsync.yaml, detect drift, gate CI", cmdCheck},
 		{"sync", "config-driven: extract, fix the published spec, write a report", cmdSync},
 		{"genspec", "extract code -> OpenAPI 3.1 file (built-in demo API)", cmdGenspec},

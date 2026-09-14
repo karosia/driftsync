@@ -69,9 +69,28 @@ runs:
         DRIFTSYNC_CONFIG: ${{ inputs.config }}
         DRIFTSYNC_REPORT_FILE: ${{ inputs.report-file }}
       run: |
-        set -euo pipefail
+        set -uo pipefail
         args=("$DRIFTSYNC_MODE" --config "$DRIFTSYNC_CONFIG")
         if [ -n "$DRIFTSYNC_REPORT_FILE" ]; then
           args+=(--report-file "$DRIFTSYNC_REPORT_FILE")
         fi
-        driftsync "${args[@]}"
+
+        # Captured alongside the normal console output (not instead of it) so
+        # the Job Summary tab shows the report without digging through logs —
+        # this doesn't touch report_file/sync_output, so those still behave
+        # exactly as configured either way.
+        output_capture="$(mktemp)"
+        driftsync "${args[@]}" 2>&1 | tee "$output_capture"
+        exit_code=${PIPESTATUS[0]}
+
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -s "$output_capture" ]; then
+          {
+            echo "## driftsync $DRIFTSYNC_MODE"
+            echo
+            echo '```'
+            cat "$output_capture"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        exit "$exit_code"

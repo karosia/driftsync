@@ -1,6 +1,7 @@
 package diff_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/karosia/driftsync/adapters/specfile"
@@ -241,5 +242,53 @@ func TestDiff_RequiredDangling(t *testing.T) {
 	}
 	if find(r, diff.RequiredDangling, "User [request].required[id]") != nil {
 		t.Error("id names a real property and must not be flagged dangling")
+	}
+}
+
+// TestDiff_PropertySignature_CatchesFacetsBeyondType covers what used to be
+// completely invisible: an enum value removed, a format changed, and an
+// array's item type changed all used to signature identically to the
+// unchanged case (just "type:string"/"type:array"). Same-name properties, so
+// these land as PropertyTypeChanged.
+func TestDiff_PropertySignature_CatchesFacetsBeyondType(t *testing.T) {
+	cases := []struct {
+		name         string
+		published    string
+		code         string
+		wantDetected bool
+	}{
+		{"enum value removed", "status: {type: string, enum: [a, b, c]}", "status: {type: string, enum: [a, b]}", true},
+		{"enum unchanged (order differs)", "status: {type: string, enum: [a, b]}", "status: {type: string, enum: [b, a]}", false},
+		{"format changed", "at: {type: string, format: date}", "at: {type: string, format: date-time}", true},
+		{"array item type changed", "tags: {type: array, items: {type: string}}", "tags: {type: array, items: {type: integer}}", true},
+		{"array item type unchanged", "tags: {type: array, items: {type: string}}", "tags: {type: array, items: {type: string}}", false},
+		{"nullable added", "note: {type: string}", "note: {type: string, nullable: true}", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			published := mustDoc(t, specUserBothDirections("\n        "+tc.published))
+			code := mustDoc(t, specUserBothDirections("\n        "+tc.code))
+			r := diff.Diff(published, code)
+			// find the field name: it's whatever comes before the first ':'.
+			field := tc.published[:strings.IndexByte(tc.published, ':')]
+			got := find(r, diff.PropertyTypeChanged, "User [request]."+field) != nil
+			if got != tc.wantDetected {
+				t.Errorf("PropertyTypeChanged detected = %v, want %v (changes: %+v)", got, tc.wantDetected, r.Changes)
+			}
+		})
+	}
+}
+
+// TestDiff_PropertySignature_OneOfVariantChanged: a oneOf swapped for a
+// different variant must be caught even though the outer type ("object" or
+// absent) didn't change.
+func TestDiff_PropertySignature_OneOfVariantChanged(t *testing.T) {
+	published := mustDoc(t, specUserBothDirections(`
+        contact: {oneOf: [{type: string}, {type: integer}]}`))
+	code := mustDoc(t, specUserBothDirections(`
+        contact: {oneOf: [{type: string}, {type: boolean}]}`))
+	r := diff.Diff(published, code)
+	if find(r, diff.PropertyTypeChanged, "User [request].contact") == nil {
+		t.Errorf("expected a oneOf variant swap to be detected, got %+v", r.Changes)
 	}
 }

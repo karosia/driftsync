@@ -358,6 +358,74 @@ func TestSync_RenameHints_OmittedFromJSONReport(t *testing.T) {
 	}
 }
 
+func TestDoctor_HealthySetup(t *testing.T) {
+	cfg := writeConfig(t, "code.yaml", "")
+	res := run.Doctor(context.Background(), run.Options{Config: cfg, Stderr: io_discard{}})
+	if !res.OK {
+		t.Fatalf("expected a healthy setup to pass, got %+v", res.Steps)
+	}
+	if len(res.Steps) != 3 {
+		t.Fatalf("expected 3 steps (code.command, code spec, published spec), got %+v", res.Steps)
+	}
+	for _, s := range res.Steps {
+		if !s.OK {
+			t.Errorf("step %q unexpectedly failed: %s", s.Name, s.Detail)
+		}
+	}
+}
+
+func TestDoctor_StopsAtFirstFailure(t *testing.T) {
+	dir := t.TempDir()
+	body := "version: 1\npublished: " + fixture(t, "published.yaml") +
+		"\ncode:\n  command: \"true\"\n  file: does-not-exist.yaml\n"
+	p := filepath.Join(dir, "driftsync.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := run.Doctor(context.Background(), run.Options{Config: cfg, Stderr: io_discard{}})
+	if res.OK {
+		t.Fatal("expected a missing code.file to fail the setup check")
+	}
+	if len(res.Steps) != 1 {
+		t.Fatalf("expected exactly 1 step (stopping at the first failure), got %+v", res.Steps)
+	}
+	if res.Steps[0].OK {
+		t.Errorf("the one step recorded should be the failure, got %+v", res.Steps[0])
+	}
+}
+
+func TestDoctor_InvalidPublishedSpec(t *testing.T) {
+	dir := t.TempDir()
+	badSpec := filepath.Join(dir, "not-openapi.yaml")
+	if err := os.WriteFile(badSpec, []byte("this: is not openapi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\npublished: " + badSpec +
+		"\ncode:\n  command: cp " + fixture(t, "code.yaml") + " openapi.gen.yaml\n  file: openapi.gen.yaml\n"
+	p := filepath.Join(dir, "driftsync.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := run.Doctor(context.Background(), run.Options{Config: cfg, Stderr: io_discard{}})
+	if res.OK {
+		t.Fatal("expected an invalid published spec to fail the setup check")
+	}
+	// code.command and the code spec parse should both have succeeded first.
+	if len(res.Steps) != 3 || res.Steps[2].OK {
+		t.Fatalf("expected 2 passing steps then the published-spec failure, got %+v", res.Steps)
+	}
+}
+
 func norm(s string) string {
 	var out []string
 	for _, ln := range strings.Split(s, "\n") {

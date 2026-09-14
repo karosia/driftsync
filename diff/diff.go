@@ -493,7 +493,27 @@ func collectProps(s *base.Schema) map[string]string {
 	return out
 }
 
+// propSignature builds a structural fingerprint of a property's schema. Two
+// props/params with an identical signature are considered the same shape —
+// used both to detect PropertyTypeChanged and (via matchRenames/
+// matchSchemaRenames) as the "same shape" half of rename matching.
+//
+// It goes one level past bare `type`, since a same-type change used to be
+// completely invisible: an enum value being removed (possibly breaking), a
+// format changing (date -> date-time), or an array's item type changing all
+// signature identically as "type:array" otherwise. It does NOT expand
+// oneOf/anyOf/allOf beyond one level or recurse into nested object
+// properties — the same "top-level, not deeply nested" tradeoff the
+// direction-aware severity model already makes (see README's Limits &
+// gotchas).
 func propSignature(sp *base.SchemaProxy) string {
+	return schemaSig(sp, 1)
+}
+
+// schemaSig is propSignature with an explicit remaining recursion budget, so
+// items/oneOf/anyOf/allOf get ONE level of real signature instead of just
+// "present" — without walking an arbitrarily deep (or cyclic) schema tree.
+func schemaSig(sp *base.SchemaProxy, depth int) string {
 	if sp == nil {
 		return ""
 	}
@@ -504,10 +524,57 @@ func propSignature(sp *base.SchemaProxy) string {
 	if s == nil {
 		return ""
 	}
+
+	var b strings.Builder
 	if len(s.Type) > 0 {
-		return "type:" + strings.Join(s.Type, "|")
+		b.WriteString("type:" + strings.Join(s.Type, "|"))
+	} else {
+		b.WriteString("type:?")
 	}
-	return "type:?"
+	if s.Format != "" {
+		b.WriteString(",format:" + s.Format)
+	}
+	if s.Nullable != nil && *s.Nullable {
+		b.WriteString(",nullable")
+	}
+	if len(s.Enum) > 0 {
+		vals := make([]string, len(s.Enum))
+		for i, n := range s.Enum {
+			vals[i] = n.Value
+		}
+		sort.Strings(vals)
+		b.WriteString(",enum:" + strings.Join(vals, "|"))
+	}
+	if depth > 0 {
+		if s.Items != nil && s.Items.IsA() {
+			b.WriteString(",items:" + schemaSig(s.Items.A, depth-1))
+		}
+		if sig := sortedSigs(s.OneOf, depth-1); sig != "" {
+			b.WriteString(",oneOf:" + sig)
+		}
+		if sig := sortedSigs(s.AnyOf, depth-1); sig != "" {
+			b.WriteString(",anyOf:" + sig)
+		}
+		if sig := sortedSigs(s.AllOf, depth-1); sig != "" {
+			b.WriteString(",allOf:" + sig)
+		}
+	}
+	return b.String()
+}
+
+// sortedSigs signs each variant and joins them order-independently, so
+// reordering oneOf/anyOf/allOf entries (which changes nothing observable)
+// doesn't register as a change.
+func sortedSigs(proxies []*base.SchemaProxy, depth int) string {
+	if len(proxies) == 0 {
+		return ""
+	}
+	sigs := make([]string, len(proxies))
+	for i, p := range proxies {
+		sigs[i] = schemaSig(p, depth)
+	}
+	sort.Strings(sigs)
+	return strings.Join(sigs, "|")
 }
 
 // ---- schema-level rename matching ---------------------------------------------
