@@ -23,9 +23,12 @@ func NewOpenAI(apiKey, model string) *OpenAI {
 func (o *OpenAI) Name() string { return "openai:" + o.Model }
 
 type openaiReq struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens,omitempty"`
-	Messages  []openaiMessage `json:"messages"`
+	Model string `json:"model"`
+	// max_tokens is deprecated and rejected by reasoning models; this one
+	// works on every current chat model and also caps reasoning tokens.
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
+	Messages            []openaiMessage `json:"messages"`
 }
 type openaiMessage struct {
 	Role    string `json:"role"`
@@ -53,7 +56,13 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (string, error) {
 	}
 	msgs = append(msgs, openaiMessage{Role: "user", Content: req.Prompt})
 
-	body, err := json.Marshal(openaiReq{Model: o.Model, MaxTokens: req.MaxTokens, Messages: msgs})
+	oreq := openaiReq{Model: o.Model, MaxCompletionTokens: req.MaxTokens, Messages: msgs}
+	// gpt-6-luna reasons at "medium" by default, which would eat our 60-150
+	// token budgets before any reply. Non-reasoning models reject the field.
+	if o.Model == "gpt-6-luna" {
+		oreq.ReasoningEffort = "none"
+	}
+	body, err := json.Marshal(oreq)
 	if err != nil {
 		return "", err
 	}

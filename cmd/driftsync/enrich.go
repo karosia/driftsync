@@ -63,10 +63,10 @@ func buildEnricher() enrich.Enricher {
 func buildLLMClient() (llm.Client, bool) {
 	var clients []llm.Client
 	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
-		clients = append(clients, llm.NewAnthropic(k, envOr("ANTHROPIC_MODEL", "claude-sonnet-4-5")))
+		clients = append(clients, llm.NewAnthropic(k, envOr("ANTHROPIC_MODEL", "claude-sonnet-5-5")))
 	}
 	if k := os.Getenv("OPENAI_API_KEY"); k != "" {
-		clients = append(clients, llm.NewOpenAI(k, envOr("OPENAI_MODEL", "gpt-4o-mini")))
+		clients = append(clients, llm.NewOpenAI(k, envOr("OPENAI_MODEL", "gpt-6-luna")))
 	}
 	switch len(clients) {
 	case 0:
