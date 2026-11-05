@@ -79,6 +79,11 @@ and it's one line of config. `driftsync check` runs 1–4; `driftsync sync` runs
 - **Direction-aware severity.** driftsync knows a removed *response* field breaks
   consumers (BREAKING) while a removed *request* field just means the server
   accepts less (info). Same edit, opposite impact — classified correctly.
+  The same goes for type changes that only grow or shrink the accepted values
+  (an enum value added/removed, `nullable` added/removed, `integer` ↔
+  `number`): *widening* breaks responses but is safe for requests, and
+  *narrowing* is the reverse. A real shape change (a different type or
+  `format`, items changing, an enum value swapped) is BREAKING both ways.
 - **The LLM proposes, it never decides.** It writes descriptions for new fields.
   If it fails or hallucinates, the structural fix is unaffected — the description
   is simply left blank.

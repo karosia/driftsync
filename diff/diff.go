@@ -77,8 +77,6 @@ func requiredFlipSeverity(dir Direction, becameRequired bool) Severity {
 	}
 }
 
-const typeChangeSeverity = Breaking // a type mismatch breaks either direction
-
 // ---- change model ------------------------------------------------------------
 
 type ChangeKind string
@@ -215,6 +213,7 @@ func diffOperationDetails(a, b *ir.Document, r *Report) {
 type paramInfo struct {
 	sig      string
 	required bool
+	schema   *base.SchemaProxy
 }
 
 func collectParams(op *v3.Operation) map[string]paramInfo {
@@ -223,6 +222,7 @@ func collectParams(op *v3.Operation) map[string]paramInfo {
 		out[p.In+":"+p.Name] = paramInfo{ // key e.g. "query:limit"
 			sig:      propSignature(p.Schema),
 			required: p.Required != nil && *p.Required,
+			schema:   p.Schema,
 		}
 	}
 	return out
@@ -247,8 +247,9 @@ func diffParameters(opKey string, a, b *v3.Operation, r *Report) {
 	}
 	for _, k := range sortedKeysCommon(ap, bp) {
 		if ap[k].sig != bp[k].sig {
+			sev, note := typeChangeSeverityFor(Request, ap[k].schema, bp[k].schema)
 			r.Changes = append(r.Changes, Change{Kind: ParameterTypeChanged, Location: loc(k),
-				From: ap[k].sig, To: bp[k].sig, Severity: typeChangeSeverity, Target: tgt(k)})
+				From: ap[k].sig, To: bp[k].sig, Severity: sev, Note: note, Target: tgt(k)})
 		}
 		if ap[k].required != bp[k].required {
 			r.Changes = append(r.Changes, Change{Kind: ParameterRequiredChanged, Location: loc(k),
@@ -428,9 +429,10 @@ func diffSchemaBody(name string, dir Direction, a, b *base.Schema, r *Report) {
 	}
 	for _, pn := range sortedKeysCommon(ap, bp) {
 		if ap[pn] != bp[pn] {
+			sev, note := typeChangeSeverityFor(dir, propProxy(a, pn), propProxy(b, pn))
 			r.Changes = append(r.Changes, Change{
 				Kind: PropertyTypeChanged, Location: loc + "." + pn,
-				From: ap[pn], To: bp[pn], Severity: typeChangeSeverity, Target: tgt(pn),
+				From: ap[pn], To: bp[pn], Severity: sev, Note: note, Target: tgt(pn),
 			})
 		}
 		if !areq[pn] && breq[pn] {
@@ -482,6 +484,15 @@ func danglingRequired(required []string, props map[string]string) []string {
 	return out
 }
 
+// propProxy returns the schema of property name in s (nil if absent).
+func propProxy(s *base.Schema, name string) *base.SchemaProxy {
+	if s == nil || s.Properties == nil {
+		return nil
+	}
+	sp, _ := s.Properties.Get(name)
+	return sp
+}
+
 func collectProps(s *base.Schema) map[string]string {
 	out := map[string]string{}
 	if s.Properties == nil {
@@ -531,9 +542,7 @@ func schemaSig(sp *base.SchemaProxy, depth int) string {
 	} else {
 		b.WriteString("type:?")
 	}
-	if s.Format != "" {
-		b.WriteString(",format:" + s.Format)
-	}
+	b.WriteString(formatSig(s))
 	if s.Nullable != nil && *s.Nullable {
 		b.WriteString(",nullable")
 	}
@@ -545,6 +554,22 @@ func schemaSig(sp *base.SchemaProxy, depth int) string {
 		sort.Strings(vals)
 		b.WriteString(",enum:" + strings.Join(vals, "|"))
 	}
+	b.WriteString(nestedSig(s, depth))
+	return b.String()
+}
+
+// formatSig and nestedSig are the parts of schemaSig that are NOT a plain
+// value-set (type / nullable / enum). typeChangeSeverityFor compares them
+// separately: if either differs, the change isn't a pure widen/narrow.
+func formatSig(s *base.Schema) string {
+	if s.Format != "" {
+		return ",format:" + s.Format
+	}
+	return ""
+}
+
+func nestedSig(s *base.Schema, depth int) string {
+	var b strings.Builder
 	if depth > 0 {
 		if s.Items != nil && s.Items.IsA() {
 			b.WriteString(",items:" + schemaSig(s.Items.A, depth-1))
