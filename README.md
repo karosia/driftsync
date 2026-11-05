@@ -405,8 +405,18 @@ identical either way; only which side you patch changes.
 
 - **OpenAPI 3.x only.** 2.0/Swagger must be converted first (e.g.
   `swagger2openapi`).
-- **Direction-aware severity covers top-level `$ref` bodies.** Inline or deeply
-  nested request/response schemas are still detected, but classified coarsely.
+- **Drift is diffed on component schemas (`#/components/schemas/*`).** Each
+  component's direction is found by following `$ref`s transitively from every
+  request body, parameter, response body (incl. `default`) and response header
+  — through array `items`, nested properties, `additionalProperties` and
+  `allOf`/`oneOf`/`anyOf` — so `type: array, items: {$ref: User}` and
+  `Order.addr -> Address` are both covered. A component no operation reaches
+  (unused, or only used from webhooks/callbacks) is still diffed, at
+  worst-case severity across both directions, and flagged as unreferenced.
+- **Properties of *inline* (non-component) schemas are not diffed.** An
+  operation whose body is an inline `type: object` with its own `properties`
+  has those properties ignored; move the shape into `components/schemas` (most
+  generators already do) to have it checked.
 - **Renames** are matched deterministically for case/separator changes
   (`user_id` ↔ `userId`) and near-misses. Semantic renames (`qty` → `quantity`)
   still *patch* as remove + add — with an LLM key set, `sync` will flag an
