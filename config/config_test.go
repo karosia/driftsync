@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -171,5 +172,28 @@ func TestWorkflowAndGenspecTemplates(t *testing.T) {
 	}
 	if b, err := config.GenspecTemplate(); err != nil || !strings.Contains(string(b), "humaadapter") {
 		t.Errorf("GenspecTemplate: %v", err)
+	}
+}
+
+// TestReadmeGoVersionMatchesGoMod keeps the install line honest: `go install`
+// needs at least go.mod's `go` directive (driven by the strictest dependency,
+// currently libopenapi), and README once said "1.25+" while go.mod said
+// 1.25.7 — so users on 1.25.0–1.25.6 with GOTOOLCHAIN=local hit an error.
+func TestReadmeGoVersionMatchesGoMod(t *testing.T) {
+	mod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^go (\S+)$`).FindSubmatch(mod)
+	if m == nil {
+		t.Fatal("no go directive in go.mod")
+	}
+	readme, err := os.ReadFile(filepath.Join("..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "requires Go " + string(m[1]) + "+"
+	if !strings.Contains(string(readme), want) {
+		t.Errorf("README install line should say %q to match go.mod", want)
 	}
 }
