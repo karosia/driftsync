@@ -190,6 +190,9 @@ code:                             # required — how to get the spec your code e
                                   #   Runs with driftsync.yaml's directory as the working dir.
                                   #   Chain conversions here too (e.g. swaggo 2.0 -> 3.x).
   file: openapi.gen.yaml          #   required: path driftsync reads the code spec from
+  timeout: 10m                    #   optional: max run time for `command` (Go duration;
+                                  #   default 10m, "0" = no limit). On timeout the command
+                                  #   and every process it started are killed.
 
 # ---- everything below is optional; values shown are the defaults ----
 

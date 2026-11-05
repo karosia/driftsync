@@ -9,11 +9,13 @@ package run
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/karosia/driftsync/adapters/specfile"
 	"github.com/karosia/driftsync/applier"
@@ -227,18 +229,38 @@ func diffOnly(ctx context.Context, o Options) (*Result, *ir.Document, *ir.Docume
 	return res, published, code, nil
 }
 
+// commandWaitDelay bounds how long Run waits for I/O to drain after the
+// command is killed (or exits) before giving up on stragglers.
+const commandWaitDelay = 5 * time.Second
+
 // extract runs the code.command (if any) with the config's directory as cwd,
 // then verifies code.file exists.
 func extract(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
 	if cfg.Code.Command != "" {
 		fmt.Fprintf(stderr, "driftsync: extracting code spec: %s\n", cfg.Code.Command)
-		cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Code.Command)
+		runCtx := ctx
+		if d := cfg.Code.TimeoutDuration; d > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, d)
+			defer cancel()
+		}
+		cmd := exec.CommandContext(runCtx, "sh", "-c", cfg.Code.Command)
 		cmd.Dir = cfg.BaseDir
 		cmd.Env = os.Environ()
+		// On timeout/cancel, kill the whole process group, not just `sh`:
+		// otherwise a child it spawned (gradle daemon, uvicorn, node) keeps
+		// running and keeps our stdout pipe open. WaitDelay is the backstop
+		// for anything that still holds the pipe after the kill.
+		killProcessGroupOnCancel(cmd)
+		cmd.WaitDelay = commandWaitDelay
 		var buf bytes.Buffer
 		cmd.Stdout = io.MultiWriter(stderr, &buf)
 		cmd.Stderr = io.MultiWriter(stderr, &buf)
 		if err := cmd.Run(); err != nil {
+			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("code.command timed out after %s (raise `code.timeout` in %s if the build legitimately needs longer): %s",
+					cfg.Code.TimeoutDuration, cfg.Source, tail(buf.String(), 800))
+			}
 			return fmt.Errorf("code.command failed (%v): %s", err, tail(buf.String(), 800))
 		}
 	}
