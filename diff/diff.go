@@ -287,49 +287,168 @@ func diffResponseCodes(opKey string, a, b *v3.Operation, r *Report) {
 
 type dirSet struct{ req, resp bool }
 
-// discoverDirections walks operations and marks which component schemas are used
-// in request bodies (req) and/or responses (resp), by following top-level $refs.
+// discoverDirections marks which component schemas are used in requests
+// (req) and/or responses (resp). Roots are every schema an operation exposes —
+// request bodies and parameters on the request side; response bodies
+// (including `default`) and response headers on the response side — and from
+// there direction propagates TRANSITIVELY through the $ref graph: array
+// `items`, nested `properties`, `additionalProperties`, allOf/oneOf/anyOf,
+// `not`, and `prefixItems`, whether those sit inline or inside another
+// component.
+//
+// Following only top-level $refs used to leave the most common list shape
+// (`type: array, items: {$ref: User}`) and any nested component (`Order.addr
+// -> Address`) with no direction at all, so they were never diffed and a
+// breaking change sailed through `check` as "no drift".
 func discoverDirections(d *ir.Document) map[string]dirSet {
 	dirs := map[string]dirSet{}
-	mark := func(name string, f func(*dirSet)) {
-		s := dirs[name]
-		f(&s)
-		dirs[name] = s
-	}
 	if d.Model == nil || d.Model.Paths == nil {
 		return dirs
 	}
+	var schemas *orderedmap.Map[string, *base.SchemaProxy]
+	if d.Model.Components != nil {
+		schemas = d.Model.Components.Schemas
+	}
+	req := &refWalker{schemas: schemas, seen: map[string]bool{}}
+	resp := &refWalker{schemas: schemas, seen: map[string]bool{}}
+
 	for p := d.Model.Paths.PathItems.First(); p != nil; p = p.Next() {
-		for op := p.Value().GetOperations().First(); op != nil; op = op.Next() {
+		pi := p.Value()
+		for _, prm := range pi.Parameters { // path-level params apply to every op
+			req.param(prm)
+		}
+		for op := pi.GetOperations().First(); op != nil; op = op.Next() {
 			o := op.Value()
-			if o.RequestBody != nil {
-				for name := range refsInContent(o.RequestBody.Content) {
-					mark(name, func(s *dirSet) { s.req = true })
-				}
+			for _, prm := range o.Parameters {
+				req.param(prm)
 			}
-			if o.Responses != nil && o.Responses.Codes != nil {
-				for c := o.Responses.Codes.First(); c != nil; c = c.Next() {
-					for name := range refsInContent(c.Value().Content) {
-						mark(name, func(s *dirSet) { s.resp = true })
+			if o.RequestBody != nil {
+				req.content(o.RequestBody.Content)
+			}
+			if o.Responses != nil {
+				if o.Responses.Default != nil {
+					resp.response(o.Responses.Default)
+				}
+				if o.Responses.Codes != nil {
+					for c := o.Responses.Codes.First(); c != nil; c = c.Next() {
+						resp.response(c.Value())
 					}
 				}
 			}
 		}
 	}
+	for name := range req.seen {
+		s := dirs[name]
+		s.req = true
+		dirs[name] = s
+	}
+	for name := range resp.seen {
+		s := dirs[name]
+		s.resp = true
+		dirs[name] = s
+	}
 	return dirs
 }
 
-func refsInContent(content *orderedmap.Map[string, *v3.MediaType]) map[string]bool {
-	out := map[string]bool{}
-	if content == nil {
-		return out
+const componentSchemaPrefix = "#/components/schemas/"
+
+// refWalker collects every component schema reachable from the roots it is
+// fed. `seen` doubles as the cycle guard: a component is expanded at most
+// once, so self-referential shapes (Node.children: [Node]) terminate.
+type refWalker struct {
+	schemas *orderedmap.Map[string, *base.SchemaProxy]
+	seen    map[string]bool
+}
+
+func (w *refWalker) param(p *v3.Parameter) {
+	if p == nil {
+		return
 	}
-	for mt := content.First(); mt != nil; mt = mt.Next() {
-		if sp := mt.Value().Schema; sp != nil && sp.IsReference() {
-			out[refName(sp.GetReference())] = true
+	w.walk(p.Schema)
+	w.content(p.Content)
+}
+
+func (w *refWalker) response(r *v3.Response) {
+	if r == nil {
+		return
+	}
+	w.content(r.Content)
+	if r.Headers != nil {
+		for h := r.Headers.First(); h != nil; h = h.Next() {
+			if hv := h.Value(); hv != nil {
+				w.walk(hv.Schema)
+				w.content(hv.Content)
+			}
 		}
 	}
-	return out
+}
+
+func (w *refWalker) content(content *orderedmap.Map[string, *v3.MediaType]) {
+	if content == nil {
+		return
+	}
+	for mt := content.First(); mt != nil; mt = mt.Next() {
+		if v := mt.Value(); v != nil {
+			w.walk(v.Schema)
+		}
+	}
+}
+
+func (w *refWalker) walk(sp *base.SchemaProxy) {
+	if sp == nil {
+		return
+	}
+	if sp.IsReference() {
+		ref := sp.GetReference()
+		if !strings.HasPrefix(ref, componentSchemaPrefix) {
+			return // external/non-component refs aren't diffed as components
+		}
+		name := refName(ref)
+		if w.seen[name] {
+			return
+		}
+		w.seen[name] = true
+		if w.schemas != nil {
+			if target, ok := w.schemas.Get(name); ok {
+				w.walkBody(target)
+			}
+		}
+		return
+	}
+	w.walkBody(sp)
+}
+
+// walkBody descends into a schema's own subschemas. A component entry may
+// itself be a bare $ref (alias), which walk() handles.
+func (w *refWalker) walkBody(sp *base.SchemaProxy) {
+	if sp == nil {
+		return
+	}
+	if sp.IsReference() {
+		w.walk(sp)
+		return
+	}
+	s := sp.Schema()
+	if s == nil {
+		return
+	}
+	if s.Properties != nil {
+		for pr := s.Properties.First(); pr != nil; pr = pr.Next() {
+			w.walk(pr.Value())
+		}
+	}
+	if s.Items != nil && s.Items.IsA() {
+		w.walk(s.Items.A)
+	}
+	if s.AdditionalProperties != nil && s.AdditionalProperties.IsA() {
+		w.walk(s.AdditionalProperties.A)
+	}
+	for _, list := range [][]*base.SchemaProxy{s.AllOf, s.OneOf, s.AnyOf, s.PrefixItems} {
+		for _, x := range list {
+			w.walk(x)
+		}
+	}
+	w.walk(s.Not)
 }
 
 func refName(ref string) string { // "#/components/schemas/User" -> "User"
@@ -370,6 +489,19 @@ func diffDirectionalSchemas(a, b *ir.Document, r *Report) {
 
 	for _, name := range sortedKeysCommon(as, bs) {
 		set := dirSet{req: da[name].req || db[name].req, resp: da[name].resp || db[name].resp}
+		if !set.req && !set.resp {
+			// Not reachable from any operation (unused, or only used via
+			// webhooks/callbacks/links we don't trace). Skipping it would hide
+			// real drift and leave `sync` unable to fix it, so diff it in BOTH
+			// directions: severity is worst-case, and patch dedups the edits.
+			from := len(r.Changes)
+			diffSchemaBody(name, Request, as[name], bs[name], r)
+			diffSchemaBody(name, Response, as[name], bs[name], r)
+			for i := from; i < len(r.Changes); i++ {
+				r.Changes[i].Note = joinNote(r.Changes[i].Note, unreferencedNote)
+			}
+			continue
+		}
 		if set.req {
 			diffSchemaBody(name, Request, as[name], bs[name], r)
 		}
@@ -377,6 +509,17 @@ func diffDirectionalSchemas(a, b *ir.Document, r *Report) {
 			diffSchemaBody(name, Response, as[name], bs[name], r)
 		}
 	}
+}
+
+// unreferencedNote marks drift in a schema no operation reaches; its
+// severity is the worst case across both directions.
+const unreferencedNote = "unreferenced by any operation; worst-case severity"
+
+func joinNote(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "; " + b
 }
 
 func collectSchemas(d *ir.Document) map[string]*base.Schema {
@@ -503,9 +646,9 @@ func collectProps(s *base.Schema) map[string]string {
 // format changing (date -> date-time), or an array's item type changing all
 // signature identically as "type:array" otherwise. It does NOT expand
 // oneOf/anyOf/allOf beyond one level or recurse into nested object
-// properties — the same "top-level, not deeply nested" tradeoff the
-// direction-aware severity model already makes (see README's Limits &
-// gotchas).
+// properties. That's fine for $ref'd shapes: a referenced component is
+// diffed on its own (discoverDirections reaches it transitively), so the
+// signature only needs to notice that the $ref target changed.
 func propSignature(sp *base.SchemaProxy) string {
 	return schemaSig(sp, 1)
 }
