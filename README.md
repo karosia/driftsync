@@ -79,6 +79,11 @@ and it's one line of config. `driftsync check` runs 1–4; `driftsync sync` runs
 - **Direction-aware severity.** driftsync knows a removed *response* field breaks
   consumers (BREAKING) while a removed *request* field just means the server
   accepts less (info). Same edit, opposite impact — classified correctly.
+  The same goes for type changes that only grow or shrink the accepted values
+  (an enum value added/removed, `nullable` added/removed, `integer` ↔
+  `number`): *widening* breaks responses but is safe for requests, and
+  *narrowing* is the reverse. A real shape change (a different type or
+  `format`, items changing, an enum value swapped) is BREAKING both ways.
 - **The LLM proposes, it never decides.** It writes descriptions for new fields.
   If it fails or hallucinates, the structural fix is unaffected — the description
   is simply left blank.
@@ -190,6 +195,9 @@ code:                             # required — how to get the spec your code e
                                   #   Runs with driftsync.yaml's directory as the working dir.
                                   #   Chain conversions here too (e.g. swaggo 2.0 -> 3.x).
   file: openapi.gen.yaml          #   required: path driftsync reads the code spec from
+  timeout: 10m                    #   optional: max run time for `command` (Go duration;
+                                  #   default 10m, "0" = no limit). On timeout the command
+                                  #   and every process it started are killed.
 
 # ---- everything below is optional; values shown are the defaults ----
 
@@ -405,8 +413,18 @@ identical either way; only which side you patch changes.
 
 - **OpenAPI 3.x only.** 2.0/Swagger must be converted first (e.g.
   `swagger2openapi`).
-- **Direction-aware severity covers top-level `$ref` bodies.** Inline or deeply
-  nested request/response schemas are still detected, but classified coarsely.
+- **Drift is diffed on component schemas (`#/components/schemas/*`).** Each
+  component's direction is found by following `$ref`s transitively from every
+  request body, parameter, response body (incl. `default`) and response header
+  — through array `items`, nested properties, `additionalProperties` and
+  `allOf`/`oneOf`/`anyOf` — so `type: array, items: {$ref: User}` and
+  `Order.addr -> Address` are both covered. A component no operation reaches
+  (unused, or only used from webhooks/callbacks) is still diffed, at
+  worst-case severity across both directions, and flagged as unreferenced.
+- **Properties of *inline* (non-component) schemas are not diffed.** An
+  operation whose body is an inline `type: object` with its own `properties`
+  has those properties ignored; move the shape into `components/schemas` (most
+  generators already do) to have it checked.
 - **Renames** are matched deterministically for case/separator changes
   (`user_id` ↔ `userId`) and near-misses. Semantic renames (`qty` → `quantity`)
   still *patch* as remove + add — with an LLM key set, `sync` will flag an
