@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/karosia/driftsync/config"
 )
@@ -171,5 +172,44 @@ func TestWorkflowAndGenspecTemplates(t *testing.T) {
 	}
 	if b, err := config.GenspecTemplate(); err != nil || !strings.Contains(string(b), "humaadapter") {
 		t.Errorf("GenspecTemplate: %v", err)
+	}
+}
+
+func TestLoad_CodeTimeout(t *testing.T) {
+	cases := []struct {
+		name    string
+		timeout string // "" = key omitted
+		want    time.Duration
+		wantErr bool
+	}{
+		{"default when omitted", "", config.DefaultCodeTimeout, false},
+		{"explicit", "90s", 90 * time.Second, false},
+		{"minutes", "15m", 15 * time.Minute, false},
+		{"zero disables", "0", 0, false},
+		{"not a duration", "ten", 0, true},
+		{"bare number", "30", 0, true},
+		{"negative", "-1s", 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := "version: 1\npublished: p.yaml\ncode:\n  file: c.yaml\n"
+			if tc.timeout != "" {
+				body += "  timeout: \"" + tc.timeout + "\"\n"
+			}
+			c, err := config.Load(write(t, dir, "driftsync.yaml", body))
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "code.timeout") {
+					t.Fatalf("want a code.timeout error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Code.TimeoutDuration != tc.want {
+				t.Errorf("TimeoutDuration = %s, want %s", c.Code.TimeoutDuration, tc.want)
+			}
+		})
 	}
 }

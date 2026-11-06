@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -51,7 +52,18 @@ type Code struct {
 	// File is the path the code-side spec is read from after Command runs
 	// (or a pre-existing file when Command is empty).
 	File string `yaml:"file"`
+	// Timeout bounds how long Command may run, as a Go duration ("90s",
+	// "15m"). Empty means DefaultCodeTimeout; "0" disables the limit. A hung
+	// build (waiting on a lock, a prompt, a dead network) would otherwise
+	// hold a CI runner until the job-level timeout — often hours.
+	Timeout string `yaml:"timeout"`
+	// TimeoutDuration is Timeout parsed by Validate. Not a YAML field.
+	TimeoutDuration time.Duration `yaml:"-"`
 }
+
+// DefaultCodeTimeout is code.timeout when unset: generous enough for a cold
+// Gradle/Maven or npm build, short enough that a hang fails fast.
+const DefaultCodeTimeout = 10 * time.Minute
 
 // Config is a parsed, validated, path-resolved driftsync.yaml.
 type Config struct {
@@ -138,6 +150,18 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Code.File) == "" {
 		return fmt.Errorf("%s: `code.file` is required (path driftsync reads the code-side spec from)", where)
+	}
+	if c.Code.Timeout == "" {
+		c.Code.TimeoutDuration = DefaultCodeTimeout
+	} else {
+		d, err := time.ParseDuration(c.Code.Timeout)
+		if c.Code.Timeout == "0" {
+			d, err = 0, nil
+		}
+		if err != nil || d < 0 {
+			return fmt.Errorf("%s: `code.timeout` must be a duration like 90s or 15m (or 0 for none), got %q", where, c.Code.Timeout)
+		}
+		c.Code.TimeoutDuration = d
 	}
 	if !oneOf(string(c.FailOn), "breaking", "any", "never") {
 		return fmt.Errorf("%s: `fail_on` must be one of breaking|any|never, got %q", where, c.FailOn)
