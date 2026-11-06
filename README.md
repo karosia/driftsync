@@ -99,7 +99,7 @@ and it's one line of config. `driftsync check` runs 1–4; `driftsync sync` runs
 ### 1. Install the CLI
 
 ```bash
-go install github.com/karosia/driftsync/cmd/driftsync@latest   # requires Go 1.25+
+go install github.com/karosia/driftsync/cmd/driftsync@latest   # requires Go 1.25.7+ (see go.mod)
 ```
 
 Prebuilt binaries for Linux / macOS / Windows are attached to each
